@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 
 [tool.uv.workspace]
 members = ["packages/*"]
+exclude = ["packages/tui"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/*/tests"]
@@ -12,4 +13,5 @@ testpaths = ["packages/*/tests"]
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-asyncio>=0.24.0",
 ]

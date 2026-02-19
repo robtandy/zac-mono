@@ -7,3 +7,4 @@ build/
 *.db
 .pytest_cache/
 uv.lock
+node_modules/
