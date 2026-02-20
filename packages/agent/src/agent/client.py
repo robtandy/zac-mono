@@ -266,8 +266,29 @@ class AgentClient:
         yield AgentEvent(type=EventType.TURN_END)
         yield AgentEvent(type=EventType.AGENT_END)
 
-    async def steer(self, message: str) -> None:
-        self._steer_queue.put_nowait(message)
+    async def steer(self, message: str) -> AsyncIterator[AgentEvent]:
+        """Steer the agent with a message or command (e.g., /compact)."""
+        if message.strip() == "/compact":
+            if not self._running or self._client is None:
+                raise AgentNotRunning("Agent is not running. Call start() first.")
+            yield AgentEvent(type=EventType.COMPACTION_START)
+            try:
+                summary, tokens_before = await self._compact()
+                yield AgentEvent(
+                    type=EventType.COMPACTION_END,
+                    summary=summary,
+                    tokens_before=tokens_before,
+                )
+            except Exception as e:
+                logger.warning("Compaction failed: %s", e)
+                yield AgentEvent(
+                    type=EventType.COMPACTION_END,
+                    summary="",
+                    tokens_before=0,
+                    message=f"Compaction failed: {e}",
+                )
+        else:
+            self._steer_queue.put_nowait(message)
 
     def context_info(self) -> dict[str, int]:
         """Return token estimates per category and total context window size."""
