@@ -1,5 +1,8 @@
 import { execSync } from "child_process";
-import { TUI, ProcessTerminal, Editor, Image, Markdown, Text, Spacer, CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
+import { writeFileSync, mkdtempSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+import { TUI, ProcessTerminal, Editor, Image, Markdown, Text, Spacer, CombinedAutocompleteProvider, getCapabilities } from "@mariozechner/pi-tui";
 import type { GatewayConnection } from "./connection.js";
 import type { ServerEvent } from "./protocol.js";
 import { editorTheme, imageTheme, markdownTheme, statusColor, statusBarColor, errorColor, userMsgColor, toolColor, toolDimColor, contextSystemColor, contextToolsColor, contextUserColor, contextAssistantColor, contextToolResultsColor, contextFreeColor, compactionColor } from "./theme.js";
@@ -18,6 +21,7 @@ export class ChatUI {
   private statusBar: Text;
   private inputQueuedDuringCompaction: string[] = [];
   private isCompacting = false;
+  private screenshotDir: string | null = null;
 
   constructor(connection: GatewayConnection) {
     this.connection = connection;
@@ -247,9 +251,18 @@ export class ChatUI {
       }
 
       case "canvas_screenshot": {
-        this.insertBeforeEditor(new Text("[Canvas screenshot]", 0, 0, statusColor));
-        const img = new Image(event.image_data, "image/png", imageTheme, { maxWidthCells: 80 });
-        this.insertBeforeEditor(img);
+        const canInline = getCapabilities().images && !process.env.TMUX;
+        if (canInline) {
+          this.insertBeforeEditor(new Text("[Canvas screenshot]", 0, 0, statusColor));
+          const img = new Image(event.image_data, "image/png", imageTheme, { maxWidthCells: 80 });
+          this.insertBeforeEditor(img);
+        } else {
+          // No image protocol or inside tmux — save to temp file
+          const dir = this.screenshotDir ?? (this.screenshotDir = mkdtempSync(join(tmpdir(), "zac-canvas-")));
+          const file = join(dir, `screenshot-${Date.now()}.png`);
+          writeFileSync(file, Buffer.from(event.image_data, "base64"));
+          this.insertBeforeEditor(new Text(`[Canvas screenshot saved: ${file}]`, 0, 0, statusColor));
+        }
         break;
       }
 
