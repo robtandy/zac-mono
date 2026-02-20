@@ -397,6 +397,14 @@ class AgentClient:
 
         return summary, tokens_before
 
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def set_model(self, model_id: str) -> None:
+        self._model = model_id
+        logger.info("Model switched to %s", model_id)
+
     async def abort(self) -> None:
         self._abort_event.set()
 

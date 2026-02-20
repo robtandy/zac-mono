@@ -86,10 +86,17 @@ async def run(
 
     async def handler(ws: ServerConnection) -> None:
         session.add_client(ws)
+        tasks: set[asyncio.Task] = set()
         try:
             async for message in ws:
-                await session.handle_client_message(ws, message)
+                task = asyncio.create_task(
+                    session.handle_client_message(ws, message)
+                )
+                tasks.add(task)
+                task.add_done_callback(tasks.discard)
         finally:
+            for task in tasks:
+                task.cancel()
             session.remove_client(ws)
 
     serve_kwargs: dict[str, Any] = {}

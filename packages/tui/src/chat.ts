@@ -22,6 +22,8 @@ export class ChatUI {
   private inputQueuedDuringCompaction: string[] = [];
   private isCompacting = false;
   private screenshotDir: string | null = null;
+  private modelList: { id: string; name: string; description: string }[] = [];
+  private currentModel: string = "";
 
   constructor(connection: GatewayConnection) {
     this.connection = connection;
@@ -35,6 +37,24 @@ export class ChatUI {
       { name: "abort", description: "Abort the current operation" },
       { name: "context", description: "Show context information" },
       { name: "compact", description: "Compact the conversation history" },
+      { name: "model", description: "Show or switch the AI model",
+        getArgumentCompletions: (prefix: string) => {
+          if (!this.modelList.length) return null;
+          const lower = prefix.toLowerCase();
+          const firstSentence = (s: string) => {
+            const end = s.indexOf(". ");
+            return end > 0 ? s.slice(0, end + 1) : s.slice(0, 120);
+          };
+          return this.modelList
+            .filter(m => m.id.toLowerCase().includes(lower) || m.name.toLowerCase().includes(lower))
+            .slice(0, 20)
+            .map(m => ({
+              value: m.id,
+              label: m.id,
+              description: m.description ? firstSentence(m.description) : m.name,
+            }));
+        },
+      },
       { name: "reload", description: "Reload the agent and web packages" },
       { name: "search", description: "Search the web using DuckDuckGo" },
     ];
@@ -63,6 +83,11 @@ export class ChatUI {
 
       if (trimmed === "/compact") {
         this.connection.send({ type: "steer", message: "/compact" });
+        return;
+      }
+
+      if (trimmed === "/model" || trimmed.startsWith("/model ")) {
+        this.connection.send({ type: "steer", message: trimmed });
         return;
       }
 
@@ -274,6 +299,20 @@ export class ChatUI {
       case "canvas_dismiss":
         this.insertBeforeEditor(new Text("[Canvas dismissed]", 0, 0, statusColor));
         break;
+
+      case "model_list":
+        this.modelList = event.models;
+        if (event.current) {
+          this.currentModel = event.current;
+          this.setStatus("Ready");
+        }
+        break;
+
+      case "model_set":
+        this.currentModel = event.model;
+        this.insertBeforeEditor(new Text(`[Model: ${event.model}]`, 1, 0, statusColor));
+        this.setStatus("Ready");
+        break;
     }
   }
 
@@ -460,13 +499,26 @@ export class ChatUI {
   private setStatus(text: string): void {
     const cwd = process.cwd();
     const dirName = cwd.split(/[\/]/).pop() || cwd;
-    this.statusBar.setText(`${text} | ${dirName}`);
+    const left = `${text} | ${dirName}`;
+    if (this.currentModel) {
+      const cols = process.stdout.columns || 80;
+      const right = this.currentModel;
+      const gap = cols - left.length - right.length;
+      if (gap > 2) {
+        this.statusBar.setText(left + " ".repeat(gap) + right);
+      } else {
+        this.statusBar.setText(left + "  " + right);
+      }
+    } else {
+      this.statusBar.setText(left);
+    }
     this.tui.requestRender();
   }
 
   setConnected(connected: boolean): void {
     if (connected) {
       this.setStatus("Ready");
+      this.connection.send({ type: "model_list_request" });
     } else {
       this.setStatus("Reconnecting...");
     }

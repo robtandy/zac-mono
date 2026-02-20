@@ -27,7 +27,7 @@ class ClientMessage(BaseModel):
             raise ProtocolError("Message must be a JSON object")
 
         msg_type = parsed.get("type")
-        if msg_type not in ("prompt", "steer", "abort", "context_request"):
+        if msg_type not in ("prompt", "steer", "abort", "context_request", "model_list_request"):
             raise ProtocolError(f"Unknown message type: {msg_type}")
 
         message = parsed.get("message", "")

@@ -10,9 +10,25 @@ from agent.events import AgentEvent, EventType
 from gateway.session import Session
 
 
+class _AsyncGenMock:
+    """A mock that acts as an async generator function and tracks calls."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def __call__(self, *args, **kwargs):
+        self.calls.append((args, kwargs))
+        return
+        yield  # make it an async generator
+
+    def assert_called_once_with(self, *args):
+        assert len(self.calls) == 1
+        assert self.calls[0][0] == args
+
+
 def _mock_agent():
     agent = MagicMock()
-    agent.steer = AsyncMock()
+    agent.steer = _AsyncGenMock()
     agent.abort = AsyncMock()
     return agent
 

@@ -39,6 +39,7 @@ class Session:
         self.agent = agent
         self.clients: set[ServerConnection] = set()
         self._prompt_lock = asyncio.Lock()
+        self._model_cache: list[dict[str, str]] | None = None
 
     def add_client(self, ws: ServerConnection) -> None:
         self.clients.add(ws)
@@ -69,8 +70,11 @@ class Session:
             case "prompt":
                 await self._handle_prompt(msg.message)
             case "steer":
-                if msg.message.strip() == "/reload":
+                stripped = msg.message.strip()
+                if stripped == "/reload":
                     await self._handle_reload()
+                elif stripped.startswith("/model"):
+                    await self._handle_model_command(stripped)
                 else:
                     logger.debug("Steer: %s", msg.message)
                     async for event in self.agent.steer(msg.message):
@@ -81,6 +85,13 @@ class Session:
             case "context_request":
                 data = self.agent.context_info()
                 await ws.send(context_info_message(data))
+            case "model_list_request":
+                models = await self._get_model_list()
+                await ws.send(json.dumps({
+                    "type": "model_list",
+                    "models": models,
+                    "current": self.agent.model,
+                }))
 
     async def _handle_reload(self) -> None:
         """Hot-reload agent modules and rebuild web package."""
@@ -151,6 +162,50 @@ class Session:
             "success": success,
             "message": message,
         }))
+
+    async def _handle_model_command(self, command: str) -> None:
+        """Handle /model [model_id] — show or switch model."""
+        parts = command.split(None, 1)
+        if len(parts) < 2:
+            # No argument: show current model
+            await self.broadcast(json.dumps({
+                "type": "model_set",
+                "model": self.agent.model,
+            }))
+            return
+        model_id = parts[1].strip()
+        self.agent.set_model(model_id)
+        await self.broadcast(json.dumps({
+            "type": "model_set",
+            "model": model_id,
+        }))
+
+    async def _get_model_list(self) -> list[dict[str, str]]:
+        """Fetch available models from OpenRouter (cached)."""
+        if self._model_cache is not None:
+            return self._model_cache
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://openrouter.ai/api/v1/models",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                self._model_cache = [
+                    {
+                        "id": m["id"],
+                        "name": m.get("name", m["id"]),
+                        "description": m.get("description", ""),
+                    }
+                    for m in data.get("data", [])
+                ]
+                logger.info("Fetched %d models from OpenRouter", len(self._model_cache))
+                return self._model_cache
+        except Exception as e:
+            logger.warning("Failed to fetch model list: %s", e)
+            return []
 
     async def _handle_prompt(self, message: str) -> None:
         # Broadcast user message to all clients so they stay in sync
