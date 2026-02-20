@@ -71,6 +71,20 @@ export class ChatUI {
     const text = this.inputEl.value.trim();
     if (!text) return;
 
+    if (text === "/compact") {
+      this.connection.send({ type: "steer", message: "/compact" });
+      this.inputEl.value = "";
+      this.autoResize();
+      return;
+    }
+
+    if (text === "/context") {
+      this.connection.send({ type: "context_request" });
+      this.inputEl.value = "";
+      this.autoResize();
+      return;
+    }
+
     if (this.isCompacting) {
       this.inputQueuedDuringCompaction.push(text);
       this.addQueuedMessage(text);
