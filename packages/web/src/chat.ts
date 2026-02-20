@@ -40,6 +40,8 @@ export class ChatUI {
   private currentText = "";
   private isStreaming = false;
   private renderRAF: number | null = null;
+  private isCompacting = false;
+  private inputQueuedDuringCompaction: string[] = [];
 
   constructor(connection: GatewayConnection) {
     this.connection = connection;
@@ -69,6 +71,14 @@ export class ChatUI {
     const text = this.inputEl.value.trim();
     if (!text) return;
 
+    if (this.isCompacting) {
+      this.inputQueuedDuringCompaction.push(text);
+      this.addQueuedMessage(text);
+      this.inputEl.value = "";
+      this.autoResize();
+      return;
+    }
+
     this.connection.send({ type: "prompt", message: text });
     this.inputEl.value = "";
     this.autoResize();
@@ -93,16 +103,19 @@ export class ChatUI {
       case "turn_start":
         this.currentText = "";
         this.startAssistantMessage();
+        this.setStatus("Thinking...");
         break;
 
       case "text_delta":
         this.currentText += event.delta;
         this.scheduleRender();
+        this.setStatus("Responding...");
         break;
 
       case "tool_start":
         this.flushAssistantText();
         this.addToolMessage(`Running ${event.tool_name}...`);
+        this.setStatus(`Running tool: ${event.tool_name}`);
         break;
 
       case "tool_update":
@@ -118,12 +131,43 @@ export class ChatUI {
       case "turn_end":
       case "agent_end":
         this.finalizeAssistantMessage();
+        this.setStatus("Ready");
         break;
 
       case "error":
         this.finalizeAssistantMessage();
         this.addErrorMessage(event.message);
+        this.setStatus("Error");
         break;
+
+      case "context_info":
+        // Could render a context bar; for now just ignore
+        break;
+
+      case "compaction_start":
+        this.isCompacting = true;
+        this.setStatus("Compacting context...");
+        break;
+
+      case "compaction_end": {
+        this.isCompacting = false;
+        // Clear all messages from the DOM
+        this.messagesEl.innerHTML = "";
+        // Show compaction banner
+        if (event.summary) {
+          const banner = document.createElement("div");
+          banner.className = "compaction-banner";
+          banner.textContent = `[Compacted from ${event.tokens_before.toLocaleString()} tokens]`;
+          this.messagesEl.appendChild(banner);
+        }
+        this.setStatus("Ready");
+        // Flush queued input
+        for (const msg of this.inputQueuedDuringCompaction) {
+          this.connection.send({ type: "prompt", message: msg });
+        }
+        this.inputQueuedDuringCompaction = [];
+        break;
+      }
     }
   }
 
@@ -218,6 +262,21 @@ export class ChatUI {
     el.appendChild(body);
 
     return el;
+  }
+
+  private setStatus(text: string): void {
+    this.statusText.textContent = text;
+  }
+
+  private addQueuedMessage(text: string): void {
+    const el = document.createElement("div");
+    el.className = "message queued";
+    const body = document.createElement("div");
+    body.className = "message-body";
+    body.textContent = `[Queued] ${text}`;
+    el.appendChild(body);
+    this.messagesEl.appendChild(el);
+    this.scrollToBottom();
   }
 
   private scrollToBottom(): void {
