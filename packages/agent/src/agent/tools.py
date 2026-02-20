@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+import httpx
 from pydantic import BaseModel, Field
 
 
@@ -256,10 +257,61 @@ class EditTool(Tool):
         return ToolResult(output="Edit applied successfully.")
 
 
+class SearchWebTool(Tool):
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="search_web",
+            description="Search the web using DuckDuckGo (no API key required).",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query.",
+                    }
+                },
+                "required": ["query"],
+            },
+        )
+
+    async def execute(self, args: dict[str, Any]) -> ToolResult:
+        query = args.get("query", "")
+        if not query:
+            return ToolResult(output="No query provided.", is_error=True)
+
+        url = f"https://api.duckduckgo.com/?q={query}&format=json&no_redirect=1"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
+                
+                results = []
+                if data.get("AbstractText"):
+                    results.append(f"**Summary**: {data["AbstractText"]}")
+                if data.get("Answer"):
+                    results.append(f"**Answer**: {data["Answer"]}")
+                if data.get("RelatedTopics"):
+                    for topic in data["RelatedTopics"][:3]:  # Limit to 3 topics
+                        if "Text" in topic:
+                            results.append(f"- {topic["Text"]}")
+                        elif "Topics" in topic:
+                            for subtopic in topic["Topics"][:2]:  # Limit to 2 subtopics
+                                results.append(f"- {subtopic["Text"]}")
+                
+                if not results:
+                    return ToolResult(output="No results found.")
+                
+                return ToolResult(output="\n".join(results))
+        except Exception as e:
+            return ToolResult(output=f"Failed to search: {e}", is_error=True)
+
+
 def default_tools() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(BashTool())
     registry.register(ReadTool())
     registry.register(WriteTool())
     registry.register(EditTool())
+    registry.register(SearchWebTool())
     return registry

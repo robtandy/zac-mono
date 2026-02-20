@@ -5,6 +5,7 @@ from .tools import (
     BashTool,
     EditTool,
     ReadTool,
+    SearchWebTool,
     Tool,
     ToolDefinition,
     ToolRegistry,
@@ -28,5 +29,6 @@ __all__ = [
     "ReadTool",
     "WriteTool",
     "EditTool",
+    "SearchWebTool",
     "default_tools",
 ]
