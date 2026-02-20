@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { TUI, ProcessTerminal, Editor, Markdown, Text, Spacer } from "@mariozechner/pi-tui";
+import { TUI, ProcessTerminal, Editor, Markdown, Text, Spacer, CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
 import type { GatewayConnection } from "./connection.js";
 import type { ServerEvent } from "./protocol.js";
 import { editorTheme, markdownTheme, statusColor, statusBarColor, errorColor, userMsgColor, toolColor, toolDimColor, contextSystemColor, contextToolsColor, contextUserColor, contextAssistantColor, contextToolResultsColor, contextFreeColor, compactionColor } from "./theme.js";
@@ -25,6 +25,21 @@ export class ChatUI {
     this.tui = new TUI(terminal);
 
     this.editor = new Editor(this.tui, editorTheme);
+
+    // Define slash commands for autocomplete
+    const slashCommands = [
+      { name: "abort", description: "Abort the current operation" },
+      { name: "context", description: "Show context information" },
+      { name: "compact", description: "Compact the conversation history" },
+      { name: "reload", description: "Reload the agent and web packages" },
+    ];
+
+    // Create autocomplete provider for slash commands
+    const autocompleteProvider = new CombinedAutocompleteProvider(
+      slashCommands,
+      process.cwd() // Base path for file completion
+    );
+    this.editor.setAutocompleteProvider(autocompleteProvider);
 
     this.editor.onSubmit = (text: string) => {
       const trimmed = text.trim();
@@ -68,6 +83,8 @@ export class ChatUI {
       this.currentText = "";
       this.currentMarkdown = null;
     };
+
+
 
     this.tui.addChild(this.editor);
     this.statusBar = new Text("", 1, 0, statusBarColor);
