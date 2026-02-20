@@ -167,13 +167,23 @@ export class ChatUI {
         this.isCompacting = false;
         // Clear all messages from the DOM
         this.messagesEl.innerHTML = "";
-        // Show compaction banner
+        // Show compaction banner with token count
+        const banner = document.createElement("div");
+        banner.className = "compaction-banner";
+        const tokenInfo = event.tokens_before > 0
+          ? `[Compacted from ${event.tokens_before.toLocaleString()} tokens]`
+          : "[Compaction complete]";
+        banner.textContent = tokenInfo;
+        this.messagesEl.appendChild(banner);
+        // Show summary text
         if (event.summary) {
-          const banner = document.createElement("div");
-          banner.className = "compaction-banner";
-          banner.textContent = `[Compacted from ${event.tokens_before.toLocaleString()} tokens]`;
-          this.messagesEl.appendChild(banner);
+          const summaryEl = this.createMessage("assistant");
+          const body = summaryEl.querySelector(".message-body")!;
+          const html = marked.parse(event.summary) as string;
+          body.innerHTML = html;
+          this.messagesEl.appendChild(summaryEl);
         }
+        this.scrollToBottom();
         this.setStatus("Ready");
         // Flush queued input
         for (const msg of this.inputQueuedDuringCompaction) {

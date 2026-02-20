@@ -347,7 +347,7 @@ class AgentClient:
         tokens_before = self._estimate_tokens()
         cut = self._find_cut_point()
         if cut <= 0:
-            return "", tokens_before
+            return "(Nothing to compact — context is small enough)", tokens_before
 
         old_messages = self._messages[:cut]
         kept_messages = self._messages[cut:]

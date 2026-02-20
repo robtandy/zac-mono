@@ -168,12 +168,16 @@ export class ChatUI {
         const children = this.tui.children;
         const editorIdx = children.indexOf(this.editor);
         children.splice(0, editorIdx);
-        // Show compaction summary
+        // Show compaction header
+        const header = event.tokens_before > 0
+          ? `[Compacted from ${event.tokens_before.toLocaleString()} tokens]`
+          : "[Compaction complete]";
+        this.insertBeforeEditor(new Text(header, 1, 0, compactionColor));
+        // Show summary text
         if (event.summary) {
-          const header = `[Compacted from ${event.tokens_before.toLocaleString()} tokens]`;
-          this.insertBeforeEditor(new Text(header, 1, 0, compactionColor));
-          this.insertBeforeEditor(new Spacer(1));
+          this.insertBeforeEditor(new Markdown(event.summary, 0, 0, markdownTheme));
         }
+        this.insertBeforeEditor(new Spacer(1));
         this.setStatus("Ready");
         this.tui.requestRender();
         // Flush queued input
