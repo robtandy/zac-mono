@@ -18,12 +18,19 @@ class CanvasTool(Tool):
         return ToolDefinition(
             name="canvas",
             description=(
-                "Control a persistent browser canvas. Actions:\n"
-                "- render: Display HTML content on the canvas\n"
-                "- navigate: Load a URL on the canvas\n"
-                "- execute_js: Run JavaScript and get the return value\n"
-                "- screenshot: Capture the canvas as a PNG image\n"
-                "- dismiss: Close the canvas"
+                "Control a persistent browser canvas for interacting with web content. "
+                "Use this to:"
+                "\n- Load a webpage (navigate), then screenshot it to see the content."
+                "\n- Execute JavaScript in the page to extract data or manipulate elements."
+                "\n- Render custom HTML/Lit interfaces (e.g., graphs, forms, or visualizations) to show to the user."
+                "\n- Dismiss the canvas when done to free resources."
+                "\n\n"
+                "Example workflow:"
+                "\n1. `navigate` to a URL (e.g., a documentation page)."
+                "\n2. `screenshot` to capture the page for analysis."
+                "\n3. `execute_js` to extract data or interact with the page."
+                "\n4. `render` custom HTML (e.g., a graph using Chart.js or a Lit component)."
+                "\n5. `dismiss` the canvas when finished."
             ),
             parameters={
                 "type": "object",
