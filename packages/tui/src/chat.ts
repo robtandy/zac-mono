@@ -1,73 +1,10 @@
 import { execSync } from "child_process";
+import { writeFileSync, mkdtempSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import { TUI, ProcessTerminal, Editor, Image, Markdown, Text, Spacer, CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
-import type { Terminal } from "@mariozechner/pi-tui";
 import type { GatewayConnection } from "./connection.js";
 import type { ServerEvent } from "./protocol.js";
-
-/**
- * Wraps a ProcessTerminal to intercept Kitty graphics sequences (APC: ESC _G ... ESC \)
- * and wrap them in tmux DCS passthrough (ESC P tmux; <doubled-ESC content> ESC \).
- */
-class TmuxPassthroughTerminal implements Terminal {
-  private inner: ProcessTerminal;
-
-  constructor(inner: ProcessTerminal) {
-    this.inner = inner;
-  }
-
-  start(onInput: (data: string) => void, onResize: () => void) { this.inner.start(onInput, onResize); }
-  stop() { this.inner.stop(); }
-  drainInput(maxMs?: number, idleMs?: number) { return this.inner.drainInput(maxMs, idleMs); }
-  get columns() { return this.inner.columns; }
-  get rows() { return this.inner.rows; }
-  get kittyProtocolActive() { return this.inner.kittyProtocolActive; }
-  moveBy(lines: number) { this.inner.moveBy(lines); }
-  hideCursor() { this.inner.hideCursor(); }
-  showCursor() { this.inner.showCursor(); }
-  clearLine() { this.inner.clearLine(); }
-  clearFromCursor() { this.inner.clearFromCursor(); }
-  clearScreen() { this.inner.clearScreen(); }
-  setTitle(title: string) { this.inner.setTitle(title); }
-
-  write(data: string) {
-    this.inner.write(wrapKittyForTmux(data));
-  }
-}
-
-/** Wrap Kitty APC graphics sequences in tmux DCS passthrough. */
-function wrapKittyForTmux(data: string): string {
-  // Kitty graphics: \x1b_G ... \x1b\   (APC sequence)
-  // tmux passthrough: \x1bPtmux; <content with ESC doubled> \x1b\\
-  const ESC = "\x1b";
-  const APC_START = ESC + "_G";
-  const ST = ESC + "\\";
-
-  let result = "";
-  let pos = 0;
-  while (pos < data.length) {
-    const apcIdx = data.indexOf(APC_START, pos);
-    if (apcIdx === -1) {
-      result += data.slice(pos);
-      break;
-    }
-    // Output everything before the APC
-    result += data.slice(pos, apcIdx);
-    // Find the ST (string terminator)
-    const stIdx = data.indexOf(ST, apcIdx + APC_START.length);
-    if (stIdx === -1) {
-      // Unterminated — pass through as-is
-      result += data.slice(apcIdx);
-      break;
-    }
-    // Extract the full Kitty sequence including ESC_G and ESC\
-    const kittySeq = data.slice(apcIdx, stIdx + ST.length);
-    // Wrap: double all ESC bytes inside, then wrap in DCS passthrough
-    const inner = kittySeq.replaceAll(ESC, ESC + ESC);
-    result += ESC + "Ptmux;" + inner + ESC + "\\";
-    pos = stIdx + ST.length;
-  }
-  return result;
-}
 import { editorTheme, imageTheme, markdownTheme, statusColor, statusBarColor, errorColor, userMsgColor, toolColor, toolDimColor, contextSystemColor, contextToolsColor, contextUserColor, contextAssistantColor, contextToolResultsColor, contextFreeColor, compactionColor } from "./theme.js";
 
 const MAX_RESULT_LINES = 20;
@@ -84,11 +21,11 @@ export class ChatUI {
   private statusBar: Text;
   private inputQueuedDuringCompaction: string[] = [];
   private isCompacting = false;
+  private screenshotDir: string | null = null;
 
   constructor(connection: GatewayConnection) {
     this.connection = connection;
-    const rawTerminal = new ProcessTerminal();
-    const terminal = process.env.TMUX ? new TmuxPassthroughTerminal(rawTerminal) : rawTerminal;
+    const terminal = new ProcessTerminal();
     this.tui = new TUI(terminal);
 
     this.editor = new Editor(this.tui, editorTheme);
@@ -314,9 +251,18 @@ export class ChatUI {
       }
 
       case "canvas_screenshot": {
-        this.insertBeforeEditor(new Text("[Canvas screenshot]", 0, 0, statusColor));
-        const img = new Image(event.image_data, "image/png", imageTheme, { maxWidthCells: 80 });
-        this.insertBeforeEditor(img);
+        if (!process.env.TMUX) {
+          // Native Kitty/iTerm2 — inline image
+          this.insertBeforeEditor(new Text("[Canvas screenshot]", 0, 0, statusColor));
+          const img = new Image(event.image_data, "image/png", imageTheme, { maxWidthCells: 80 });
+          this.insertBeforeEditor(img);
+        } else {
+          // Inside tmux — save to file, show path
+          const dir = this.screenshotDir ?? (this.screenshotDir = mkdtempSync(join(tmpdir(), "zac-canvas-")));
+          const file = join(dir, `screenshot-${Date.now()}.png`);
+          writeFileSync(file, Buffer.from(event.image_data, "base64"));
+          this.insertBeforeEditor(new Text(`[Canvas screenshot saved: ${file}]`, 0, 0, statusColor));
+        }
         break;
       }
 
