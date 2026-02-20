@@ -265,6 +265,7 @@ export class ChatUI {
             execSync(`kitten icat --transfer-mode=file "${file}"`, { stdio: "inherit", timeout: 5000 });
           } catch {
             this.insertBeforeEditor(new Text(`[Canvas screenshot saved: ${file}]`, 0, 0, statusColor));
+            this.insertBeforeEditor(new Text("[Install kitty to display inline: https://sw.kovidgoyal.net/kitty/]", 0, 0, statusColor));
           }
         }
         break;
