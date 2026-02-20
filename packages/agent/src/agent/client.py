@@ -306,6 +306,50 @@ class AgentClient:
                     tokens_before=0,
                     message=f"Compaction failed: {e}",
                 )
+        elif message.strip() == "/model-info":
+            if not self._running or self._client is None:
+                raise AgentNotRunning("Agent is not running. Call start() first.")
+            # Fetch model details from OpenRouter (cached to avoid repeated requests)
+            model_details = await self._get_model_details(self._model)
+            
+            # Format model details as Markdown
+            pricing = model_details.get("pricing", {})
+            # OpenRouter returns price per token, convert to per 1M tokens
+            prompt_cost = float(pricing.get("prompt", 0)) * 1_000_000 if pricing.get("prompt") else "N/A"
+            completion_cost = float(pricing.get("completion", 0)) * 1_000_000 if pricing.get("completion") else "N/A"
+            
+            # Format with 2 decimal places
+            prompt_cost_str = f"{prompt_cost:.2f}" if isinstance(prompt_cost, (int, float)) else prompt_cost
+            completion_cost_str = f"{completion_cost:.2f}" if isinstance(completion_cost, (int, float)) else completion_cost
+            
+            markdown = f"""### Model Info
+
+| Field               | Value                          |
+|---------------------|--------------------------------|
+| **Model ID**        | `{self._model}`                |
+| **Name**            | {model_details.get("name", "N/A")} |
+| **Description**      | {model_details.get("description", "N/A")} |
+| **Context Window**   | {_MODEL_CONTEXT_SIZES.get(self._model, 128000)} tokens |
+| **Prompt Cost**      | ${prompt_cost_str} per 1M tokens   |
+| **Completion Cost**  | ${completion_cost_str} per 1M tokens |
+
+#### Provider Info
+| Field                     | Value                          |
+|---------------------------|--------------------------------|
+| **Max Completion Tokens** | {model_details.get("top_provider", {}).get("max_completion_tokens", "N/A")} |
+| **Is Moderated**          | {model_details.get("top_provider", {}).get("is_moderated", "N/A")} |
+"""
+            
+            model_info = {
+                "model": self._model,
+                "context_window": _MODEL_CONTEXT_SIZES.get(self._model, 128000),
+                "details": model_details,
+                "markdown": markdown,
+            }
+            yield AgentEvent(
+                type=EventType.MODEL_INFO,
+                model_info=model_info,
+            )
         else:
             self._steer_queue.put_nowait(message)
 
@@ -407,6 +451,44 @@ class AgentClient:
 
     async def abort(self) -> None:
         self._abort_event.set()
+
+    async def _get_model_details(self, model_id: str) -> dict[str, Any]:
+        """Fetch model details from OpenRouter, including pricing, description, and name."""
+        if not hasattr(self, "_model_details_cache"):
+            self._model_details_cache: dict[str, dict[str, Any]] = {}
+        
+        if model_id in self._model_details_cache:
+            return self._model_details_cache[model_id]
+        
+        try:
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://openrouter.ai/api/v1/models",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                
+                for model in data.get("data", []):
+                    self._model_details_cache[model["id"]] = {
+                        "name": model.get("name", model["id"]),
+                        "description": model.get("description", "No description available."),
+                        "context_length": model.get("context_length"),
+                        "pricing": model.get("pricing", {}),
+                        "top_provider": model.get("top_provider", {}),
+                    }
+                
+                return self._model_details_cache.get(model_id, {})
+        except Exception as e:
+            logger.warning("Failed to fetch model details: %s", e)
+            return {
+                "name": model_id,
+                "description": "Failed to fetch model details.",
+                "context_length": None,
+                "pricing": {},
+                "top_provider": {},
+            }
 
     async def _create_stream_with_retry(self):
         """Create a streaming completion with exponential backoff retry."""
