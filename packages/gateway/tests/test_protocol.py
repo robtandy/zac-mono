@@ -5,7 +5,7 @@ import json
 import pytest
 
 from agent.events import AgentEvent, EventType
-from gateway.protocol import ClientMessage, ProtocolError, error_message, serialize_event
+from gateway.protocol import ClientMessage, ProtocolError, context_info_message, error_message, serialize_event, user_message
 
 
 class TestClientMessageParsing:
@@ -22,6 +22,11 @@ class TestClientMessageParsing:
     def test_parse_abort(self):
         msg = ClientMessage.from_json('{"type": "abort"}')
         assert msg.type == "abort"
+        assert msg.message == ""
+
+    def test_parse_context_request(self):
+        msg = ClientMessage.from_json('{"type": "context_request"}')
+        assert msg.type == "context_request"
         assert msg.message == ""
 
     def test_invalid_json(self):
@@ -79,6 +84,32 @@ class TestSerializeEvent:
         event = AgentEvent(type=EventType.ERROR, message="oops")
         result = json.loads(serialize_event(event))
         assert result == {"type": "error", "message": "oops"}
+
+
+class TestUserMessage:
+    def test_user_message(self):
+        result = json.loads(user_message("Hello world"))
+        assert result == {"type": "user_message", "message": "Hello world"}
+
+
+class TestContextInfoMessage:
+    def test_context_info_message(self):
+        data = {
+            "system": 100,
+            "tools": 200,
+            "user": 300,
+            "assistant": 400,
+            "tool_results": 50,
+            "context_window": 128000,
+        }
+        result = json.loads(context_info_message(data))
+        assert result["type"] == "context_info"
+        assert result["system"] == 100
+        assert result["tools"] == 200
+        assert result["user"] == 300
+        assert result["assistant"] == 400
+        assert result["tool_results"] == 50
+        assert result["context_window"] == 128000
 
 
 class TestErrorMessage:

@@ -88,12 +88,14 @@ class TestSessionHandleMessage:
 
         await session.handle_client_message(ws, '{"type": "prompt", "message": "Hello"}')
 
-        assert ws.send.call_count == 3
+        assert ws.send.call_count == 4
         calls = [json.loads(call.args[0]) for call in ws.send.call_args_list]
-        assert calls[0]["type"] == "turn_start"
-        assert calls[1]["type"] == "text_delta"
-        assert calls[1]["delta"] == "Hi"
-        assert calls[2]["type"] == "agent_end"
+        assert calls[0]["type"] == "user_message"
+        assert calls[0]["message"] == "Hello"
+        assert calls[1]["type"] == "turn_start"
+        assert calls[2]["type"] == "text_delta"
+        assert calls[2]["delta"] == "Hi"
+        assert calls[3]["type"] == "agent_end"
 
     @pytest.mark.asyncio
     async def test_handle_steer(self):
@@ -126,6 +128,35 @@ class TestSessionHandleMessage:
         ws.send.assert_called_once()
         error = json.loads(ws.send.call_args[0][0])
         assert error["type"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_handle_context_request(self):
+        agent = _mock_agent()
+        agent.context_info = MagicMock(return_value={
+            "system": 10,
+            "tools": 20,
+            "user": 30,
+            "assistant": 40,
+            "tool_results": 5,
+            "context_window": 128000,
+        })
+        session = Session(agent)
+        ws1 = _mock_ws()
+        ws2 = _mock_ws()
+        session.add_client(ws1)
+        session.add_client(ws2)
+
+        await session.handle_client_message(ws1, '{"type": "context_request"}')
+
+        # Only the requesting client should receive the response
+        agent.context_info.assert_called_once()
+        ws1.send.assert_called_once()
+        ws2.send.assert_not_called()
+
+        response = json.loads(ws1.send.call_args[0][0])
+        assert response["type"] == "context_info"
+        assert response["system"] == 10
+        assert response["context_window"] == 128000
 
     @pytest.mark.asyncio
     async def test_prompt_serialized(self):

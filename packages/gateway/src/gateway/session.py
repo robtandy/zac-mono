@@ -9,7 +9,7 @@ from websockets.asyncio.server import ServerConnection
 from agent import AgentClient
 from agent.events import EventType
 
-from .protocol import ClientMessage, ProtocolError, error_message, serialize_event
+from .protocol import ClientMessage, ProtocolError, context_info_message, error_message, serialize_event, user_message
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +60,13 @@ class Session:
             case "abort":
                 logger.debug("Abort requested")
                 await self.agent.abort()
+            case "context_request":
+                data = self.agent.context_info()
+                await ws.send(context_info_message(data))
 
     async def _handle_prompt(self, message: str) -> None:
+        # Broadcast user message to all clients so they stay in sync
+        await self.broadcast(user_message(message))
         async with self._prompt_lock:
             try:
                 async for event in self.agent.prompt(message):

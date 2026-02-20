@@ -47,3 +47,14 @@ export const markdownTheme: MarkdownTheme = {
 export const statusColor = gray;
 export const errorColor = red;
 export const userMsgColor = green;
+export const toolColor = yellow;
+export const toolDimColor = dim;
+
+// Context bar colors
+export const blue = (s: string) => `\x1b[34m${s}\x1b[39m`;
+export const contextSystemColor = cyan;
+export const contextToolsColor = yellow;
+export const contextUserColor = green;
+export const contextAssistantColor = magenta;
+export const contextToolResultsColor = blue;
+export const contextFreeColor = gray;

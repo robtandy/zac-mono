@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel
 
 from agent.events import AgentEvent
 
@@ -11,8 +12,7 @@ class ProtocolError(Exception):
     """Raised when a client message is malformed."""
 
 
-@dataclass
-class ClientMessage:
+class ClientMessage(BaseModel):
     type: str
     message: str = ""
 
@@ -27,7 +27,7 @@ class ClientMessage:
             raise ProtocolError("Message must be a JSON object")
 
         msg_type = parsed.get("type")
-        if msg_type not in ("prompt", "steer", "abort"):
+        if msg_type not in ("prompt", "steer", "abort", "context_request"):
             raise ProtocolError(f"Unknown message type: {msg_type}")
 
         message = parsed.get("message", "")
@@ -39,6 +39,14 @@ class ClientMessage:
 
 def serialize_event(event: AgentEvent) -> str:
     return json.dumps(event.to_dict())
+
+
+def user_message(message: str) -> str:
+    return json.dumps({"type": "user_message", "message": message})
+
+
+def context_info_message(data: dict[str, Any]) -> str:
+    return json.dumps({"type": "context_info", **data})
 
 
 def error_message(message: str) -> str:

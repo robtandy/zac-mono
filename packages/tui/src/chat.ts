@@ -1,7 +1,11 @@
+import { execSync } from "child_process";
 import { TUI, ProcessTerminal, Editor, Markdown, Text, Spacer } from "@mariozechner/pi-tui";
 import type { GatewayConnection } from "./connection.js";
 import type { ServerEvent } from "./protocol.js";
-import { editorTheme, markdownTheme, statusColor, errorColor, userMsgColor } from "./theme.js";
+import { editorTheme, markdownTheme, statusColor, errorColor, userMsgColor, toolColor, toolDimColor, contextSystemColor, contextToolsColor, contextUserColor, contextAssistantColor, contextToolResultsColor, contextFreeColor } from "./theme.js";
+
+const MAX_RESULT_LINES = 20;
+const MAX_RESULT_CHARS = 4000;
 
 export class ChatUI {
   private tui: TUI;
@@ -9,6 +13,8 @@ export class ChatUI {
   private connection: GatewayConnection;
   private currentMarkdown: Markdown | null = null;
   private currentText = "";
+  private currentToolMarkdown: Markdown | null = null;
+  private currentToolText = "";
 
   constructor(connection: GatewayConnection) {
     this.connection = connection;
@@ -27,11 +33,18 @@ export class ChatUI {
         return;
       }
 
-      // Show user message
-      this.insertBeforeEditor(new Text(`> ${trimmed}`, 1, 0, userMsgColor));
-      this.insertBeforeEditor(new Spacer(1));
+      if (trimmed === "/context") {
+        this.connection.send({ type: "context_request" });
+        return;
+      }
 
-      // Send to gateway
+      if (trimmed.startsWith("!")) {
+        const cmd = trimmed.slice(1).trim();
+        if (cmd) this.runShellCommand(cmd);
+        return;
+      }
+
+      // Send to gateway (user_message event will come back via broadcast)
       this.connection.send({ type: "prompt", message: trimmed });
       this.currentText = "";
       this.currentMarkdown = null;
@@ -41,6 +54,15 @@ export class ChatUI {
     this.tui.setFocus(this.editor);
 
     this.tui.addInputListener((data: string) => {
+      if (data === "\x03") {
+        if (this.editor.getText().trim()) {
+          this.editor.setText("");
+        } else {
+          this.connection.send({ type: "abort" });
+          this.insertBeforeEditor(new Text("[Abort sent]", 1, 0, statusColor));
+        }
+        return true;
+      }
       if (data === "\x04") {
         this.connection.disconnect();
         this.tui.stop();
@@ -52,6 +74,11 @@ export class ChatUI {
 
   handleEvent(event: ServerEvent): void {
     switch (event.type) {
+      case "user_message":
+        this.insertBeforeEditor(new Text(`> ${event.message}`, 1, 0, userMsgColor));
+        this.insertBeforeEditor(new Spacer(1));
+        break;
+
       case "turn_start":
         this.currentText = "";
         this.currentMarkdown = null;
@@ -62,29 +89,119 @@ export class ChatUI {
         this.updateMarkdown();
         break;
 
-      case "tool_start":
+      case "tool_start": {
         this.finalizeMarkdown();
-        this.insertBeforeEditor(new Text(`[Tool: ${event.tool_name}]`, 1, 0, statusColor));
+        this.finalizeToolMarkdown();
+        const header = this.formatToolHeader(event.tool_name, event.args);
+        this.insertBeforeEditor(new Text(header, 1, 0, toolColor));
+        if (event.tool_name === "edit") {
+          const diff = this.formatEditDiff(event.args);
+          if (diff) {
+            const md = new Markdown("```diff\n" + diff + "\n```", 0, 0, markdownTheme);
+            this.insertBeforeEditor(md);
+          }
+        }
         break;
+      }
+
+      case "tool_update": {
+        this.currentToolText += event.partial_result;
+        this.updateToolMarkdown();
+        break;
+      }
 
       case "tool_end": {
+        this.finalizeToolMarkdown();
+        if (event.result) {
+          const truncated = this.truncateResult(event.result);
+          const md = new Markdown("```\n" + truncated + "\n```", 0, 0, markdownTheme);
+          this.insertBeforeEditor(md);
+        }
         const status = event.is_error ? "error" : "done";
         const color = event.is_error ? errorColor : statusColor;
-        this.insertBeforeEditor(new Text(`[Tool ${event.tool_name}: ${status}]`, 1, 0, color));
+        this.insertBeforeEditor(new Text(`[${event.tool_name}: ${status}]`, 0, 0, color));
         break;
       }
 
       case "turn_end":
       case "agent_end":
         this.finalizeMarkdown();
+        this.finalizeToolMarkdown();
         this.insertBeforeEditor(new Spacer(1));
         break;
 
       case "error":
         this.finalizeMarkdown();
+        this.finalizeToolMarkdown();
         this.insertBeforeEditor(new Text(`Error: ${event.message}`, 1, 0, errorColor));
         break;
+
+      case "context_info":
+        this.renderContextBar(event);
+        break;
     }
+  }
+
+  private formatToolHeader(toolName: string, args: Record<string, unknown>): string {
+    switch (toolName) {
+      case "bash": {
+        const cmd = typeof args.command === "string" ? args.command : "";
+        const display = cmd.length > 200 ? cmd.slice(0, 200) + "..." : cmd;
+        return `[bash] $ ${display}`;
+      }
+      case "read": {
+        const path = typeof args.file_path === "string" ? args.file_path : "";
+        let detail = path;
+        if (args.offset || args.limit) {
+          const parts: string[] = [];
+          if (args.offset) parts.push(`offset=${args.offset}`);
+          if (args.limit) parts.push(`limit=${args.limit}`);
+          detail += ` (${parts.join(", ")})`;
+        }
+        return `[read] ${detail}`;
+      }
+      case "write": {
+        const path = typeof args.file_path === "string" ? args.file_path : "";
+        const content = typeof args.content === "string" ? args.content : "";
+        return `[write] ${path} (${content.length} bytes)`;
+      }
+      case "edit": {
+        const path = typeof args.file_path === "string" ? args.file_path : "";
+        return `[edit] ${path}`;
+      }
+      default: {
+        const summary = JSON.stringify(args);
+        const display = summary.length > 200 ? summary.slice(0, 200) + "..." : summary;
+        return `[${toolName}] ${display}`;
+      }
+    }
+  }
+
+  private formatEditDiff(args: Record<string, unknown>): string | null {
+    const oldText = typeof args.old_text === "string" ? args.old_text : "";
+    const newText = typeof args.new_text === "string" ? args.new_text : "";
+    if (!oldText && !newText) return null;
+
+    const lines: string[] = [];
+    for (const line of oldText.split("\n")) {
+      lines.push(`- ${line}`);
+    }
+    for (const line of newText.split("\n")) {
+      lines.push(`+ ${line}`);
+    }
+    return lines.join("\n");
+  }
+
+  private truncateResult(result: string): string {
+    let text = result;
+    if (text.length > MAX_RESULT_CHARS) {
+      text = text.slice(0, MAX_RESULT_CHARS) + "\n... (truncated)";
+    }
+    const lines = text.split("\n");
+    if (lines.length > MAX_RESULT_LINES) {
+      return lines.slice(0, MAX_RESULT_LINES).join("\n") + "\n... (truncated)";
+    }
+    return text;
   }
 
   private updateMarkdown(): void {
@@ -101,10 +218,30 @@ export class ChatUI {
     this.tui.requestRender();
   }
 
+  private updateToolMarkdown(): void {
+    if (!this.currentToolText) return;
+
+    const display = "```\n" + this.truncateResult(this.currentToolText) + "\n```";
+    if (this.currentToolMarkdown) {
+      this.currentToolMarkdown.setText(display);
+    } else {
+      this.currentToolMarkdown = new Markdown(display, 0, 0, markdownTheme);
+      this.insertBeforeEditor(this.currentToolMarkdown);
+    }
+    this.tui.requestRender();
+  }
+
   private finalizeMarkdown(): void {
     if (this.currentMarkdown) {
       this.currentMarkdown = null;
       this.currentText = "";
+    }
+  }
+
+  private finalizeToolMarkdown(): void {
+    if (this.currentToolMarkdown) {
+      this.currentToolMarkdown = null;
+      this.currentToolText = "";
     }
   }
 
@@ -113,6 +250,76 @@ export class ChatUI {
     const editorIdx = children.indexOf(this.editor);
     children.splice(editorIdx, 0, component);
     this.tui.requestRender();
+  }
+
+  private runShellCommand(cmd: string): void {
+    this.insertBeforeEditor(new Text(`! ${cmd}`, 1, 0, userMsgColor));
+    try {
+      const output = execSync(cmd, {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 30_000,
+      });
+      if (output.trim()) {
+        const md = new Markdown("```\n" + output.trimEnd() + "\n```", 0, 0, markdownTheme);
+        this.insertBeforeEditor(md);
+      }
+    } catch (err: any) {
+      // execSync throws on non-zero exit; stdout/stderr are on the error object
+      const output = (err.stdout ?? "") + (err.stderr ?? "");
+      if (output.trim()) {
+        const md = new Markdown("```\n" + output.trimEnd() + "\n```", 0, 0, markdownTheme);
+        this.insertBeforeEditor(md);
+      } else {
+        this.insertBeforeEditor(new Text(err.message ?? "Command failed", 0, 0, errorColor));
+      }
+    }
+    this.insertBeforeEditor(new Spacer(1));
+  }
+
+  private renderContextBar(data: { system: number; tools: number; user: number; assistant: number; tool_results: number; context_window: number }): void {
+    const segments = [
+      { label: "System", tokens: data.system, color: contextSystemColor },
+      { label: "Tools", tokens: data.tools, color: contextToolsColor },
+      { label: "User", tokens: data.user, color: contextUserColor },
+      { label: "Assistant", tokens: data.assistant, color: contextAssistantColor },
+      { label: "Tool results", tokens: data.tool_results, color: contextToolResultsColor },
+    ];
+
+    const used = segments.reduce((sum, s) => sum + s.tokens, 0);
+    const free = Math.max(0, data.context_window - used);
+    const pct = data.context_window > 0 ? Math.round((used / data.context_window) * 100) : 0;
+
+    const barWidth = Math.max(20, (process.stdout.columns || 80) - 4);
+
+    // Build bar
+    let bar = "";
+    let remaining = barWidth;
+    for (const seg of segments) {
+      const cols = data.context_window > 0 ? Math.round((seg.tokens / data.context_window) * barWidth) : 0;
+      const clamped = Math.min(cols, remaining);
+      if (clamped > 0) {
+        bar += seg.color("\u2588".repeat(clamped));
+        remaining -= clamped;
+      }
+    }
+    if (remaining > 0) {
+      bar += contextFreeColor("\u2588".repeat(remaining));
+    }
+
+    // Legend
+    const legend = segments
+      .map((s) => s.color("\u25A0") + " " + s.label)
+      .concat([contextFreeColor("\u25A0") + " Free"])
+      .join("  ");
+
+    // Token summary
+    const summary = `Used: ${used.toLocaleString()} / ${data.context_window.toLocaleString()} tokens (${pct}%)`;
+
+    this.insertBeforeEditor(new Text(bar, 1, 0));
+    this.insertBeforeEditor(new Text(legend, 0, 0));
+    this.insertBeforeEditor(new Text(summary, 0, 0, statusColor));
+    this.insertBeforeEditor(new Spacer(1));
   }
 
   start(): void {
