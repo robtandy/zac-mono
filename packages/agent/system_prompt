@@ -68,3 +68,10 @@ For multi-step tasks, state a brief plan:
 3. [Step] → verify: [check]
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+
+# Before you start
+Read the AGENT.md file if it exists to undrestand the technical overview of this project, its important systems, and how they interact with each other and importantly, their boundaries - that is what programming interface they expose and what can be internal. 
+
+### When you are finished
+Ask yourself, did you know where to make this change?  was it easy? hard?  If you were confused at the start, update the AGENT.md file to better help the next agent make changes like this.   Is the agent file not there?  Write one.
+

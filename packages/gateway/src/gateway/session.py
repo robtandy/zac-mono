@@ -167,11 +167,9 @@ class Session:
         """Handle /model [model_id] — show or switch model."""
         parts = command.split(None, 1)
         if len(parts) < 2:
-            # No argument: show current model
-            await self.broadcast(json.dumps({
-                "type": "model_set",
-                "model": self.agent.model,
-            }))
+            # No argument: show current model details
+            async for event in self.agent.steer("/model-info"):
+                await self.broadcast(serialize_event(event))
             return
         model_id = parts[1].strip()
         self.agent.set_model(model_id)

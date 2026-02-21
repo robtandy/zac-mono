@@ -81,7 +81,7 @@ async def run(
 
     logging.basicConfig(level=log_level, format=log_format, handlers=handlers)
 
-    agent = AgentClient(model=model, system_prompt=system_prompt)
+    agent = AgentClient(model=model, system_prompt=system_prompt, session_file=None)
     session = Session(agent)
 
     async def handler(ws: ServerConnection) -> None:
@@ -133,5 +133,6 @@ async def run(
         await shutdown.wait()
 
     logger.info("Shutting down...")
+    await agent.save_session()
     await agent.stop()
     logger.info("Agent stopped")

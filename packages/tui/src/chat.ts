@@ -33,10 +33,12 @@ export class ChatUI {
     this.editor = new Editor(this.tui, editorTheme);
 
     // Define slash commands for autocomplete
+    // Define slash commands for autocomplete
     const slashCommands = [
       { name: "abort", description: "Abort the current operation" },
       { name: "context", description: "Show context information" },
       { name: "compact", description: "Compact the conversation history" },
+      { name: "model-info", description: "Show current model information" },
       { name: "model", description: "Show or switch the AI model",
         getArgumentCompletions: (prefix: string) => {
           if (!this.modelList.length) return null;
@@ -83,6 +85,11 @@ export class ChatUI {
 
       if (trimmed === "/compact") {
         this.connection.send({ type: "steer", message: "/compact" });
+        return;
+      }
+
+      if (trimmed === "/model-info") {
+        this.connection.send({ type: "steer", message: "/model-info" });
         return;
       }
 
@@ -311,6 +318,12 @@ export class ChatUI {
       case "model_set":
         this.currentModel = event.model;
         this.insertBeforeEditor(new Text(`[Model: ${event.model}]`, 1, 0, statusColor));
+        this.setStatus("Ready");
+        break;
+
+      case "model_info":
+        this.insertBeforeEditor(new Markdown(event.model_info.markdown, 0, 0, markdownTheme));
+        this.insertBeforeEditor(new Spacer(1));
         this.setStatus("Ready");
         break;
     }

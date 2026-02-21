@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI, APIConnectionError, APIStatusError
@@ -16,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "anthropic/claude-sonnet-4"
 _DEFAULT_SYSTEM_PROMPT = "You are a helpful coding assistant. Use the provided tools to help the user with their tasks."
+
+
+def _get_default_session_file() -> Path:
+    """Get the default session file path."""
+    session_dir = Path.home() / ".zac"
+    session_dir.mkdir(exist_ok=True)
+    return session_dir / "session.json"
 
 _MAX_RETRIES = 3
 _INITIAL_BACKOFF = 1.0
@@ -54,11 +62,22 @@ class AgentClient:
         model: str | None = None,
         system_prompt: str | None = None,
         tools: ToolRegistry | None = None,
+        session_file: str | None = None,
+    ) -> None:
+        self,
+        model: str | None = None,
+        system_prompt: str | None = None,
+        tools: ToolRegistry | None = None,
     ) -> None:
         self._model = model or _DEFAULT_MODEL
         self._system_prompt = system_prompt or _load_system_prompt()
         self._tools = tools or default_tools()
         self._client: AsyncOpenAI | None = None
+        self._messages: list[dict[str, Any]] = []
+        self._abort_event = asyncio.Event()
+        self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
+        self._running = False
+        self._session_file = Path(session_file) if session_file else _get_default_session_file()
         self._messages: list[dict[str, Any]] = []
         self._abort_event = asyncio.Event()
         self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
@@ -81,6 +100,7 @@ class AgentClient:
         self._abort_event.clear()
         self._running = True
         logger.info("Agent started (model=%s)", self._model)
+        await self.reload_session()
 
     async def stop(self) -> None:
         self._abort_event.set()
@@ -89,6 +109,39 @@ class AgentClient:
             self._client = None
         self._running = False
         logger.info("Agent stopped")
+        
+    async def save_session(self) -> None:
+        """Save the current session state to a file."""
+        if not self._running:
+            logger.warning("Agent is not running. Session not saved.")
+            return
+        
+        session_data = {
+            "model": self._model,
+            "system_prompt": self._system_prompt,
+            "messages": self._messages,
+        }
+        
+        try:
+            self._session_file.write_text(json.dumps(session_data, indent=2))
+            logger.info("Session saved to %s", self._session_file)
+        except Exception as e:
+            logger.error("Failed to save session: %s", e)
+
+    async def reload_session(self) -> None:
+        """Reload the session state from a file."""
+        if not self._session_file.exists():
+            logger.info("No session file found at %s", self._session_file)
+            return
+        
+        try:
+            session_data = json.loads(self._session_file.read_text())
+            self._model = session_data.get("model", self._model)
+            self._system_prompt = session_data.get("system_prompt", self._system_prompt)
+            self._messages = session_data.get("messages", [])
+            logger.info("Session reloaded from %s", self._session_file)
+        except Exception as e:
+            logger.error("Failed to reload session: %s", e)
 
     async def prompt(self, message: str) -> AsyncIterator[AgentEvent]:
         if not self._running or self._client is None:

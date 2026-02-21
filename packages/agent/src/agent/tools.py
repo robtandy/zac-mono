@@ -132,13 +132,17 @@ class ReadTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="read",
-            description="Read a file and return its contents with line numbers and content hashes. Use the hash to identify lines for editing.",
+            description="Read one or more files and return their contents with line numbers and content hashes. Use the hash to identify lines for editing.",
             parameters={
                 "type": "object",
                 "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Absolute path to the file to read.",
+                    "file_paths": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "description": "Absolute path to a file to read.",
+                        },
+                        "description": "List of absolute paths to the files to read.",
                     },
                     "offset": {
                         "type": "integer",
@@ -146,43 +150,55 @@ class ReadTool(Tool):
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of lines to read.",
+                        "description": "Maximum number of lines to read per file.",
                     },
                 },
-                "required": ["file_path"],
+                "required": ["file_paths"],
             },
         )
 
     async def execute(self, args: dict[str, Any]) -> ToolResult:
-        file_path = args.get("file_path", "")
+        file_paths = args.get("file_paths", [])
         offset = args.get("offset", 1)
         limit = args.get("limit")
 
-        if not file_path:
-            return ToolResult(output="No file_path provided.", is_error=True)
-        try:
-            path = Path(file_path)
-            text = path.read_text()
-        except FileNotFoundError:
-            return ToolResult(output=f"File not found: {file_path}", is_error=True)
-        except OSError as e:
-            return ToolResult(output=f"Error reading file: {e}", is_error=True)
+        if not file_paths:
+            return ToolResult(output="No file_paths provided.", is_error=True)
 
-        lines = text.splitlines(keepends=True)
-        start = max(0, offset - 1)
-        if limit is not None:
-            lines = lines[start:start + limit]
-        else:
-            lines = lines[start:]
+        results = {}
+        for file_path in file_paths:
+            if not file_path:
+                results[file_path] = "Error: Empty file path provided."
+                continue
 
-        # Output format: line:hash|content
-        numbered = []
-        for i, line in enumerate(lines, start=start + 1):
-            # Remove trailing whitespace for hashing but keep the actual content
-            content = line.rstrip('\n\r')
-            hash_val = _hash_line(content)
-            numbered.append(f"{i}:{hash_val}|{content}")
-        return ToolResult(output="\n".join(numbered))
+            try:
+                path = Path(file_path)
+                text = path.read_text()
+            except FileNotFoundError:
+                results[file_path] = f"Error: File not found: {file_path}"
+                continue
+            except OSError as e:
+                results[file_path] = f"Error reading file: {e}"
+                continue
+
+            lines = text.splitlines(keepends=True)
+            start = max(0, offset - 1)
+            if limit is not None:
+                lines = lines[start:start + limit]
+            else:
+                lines = lines[start:]
+
+            # Output format: line:hash|content
+            numbered = []
+            for i, line in enumerate(lines, start=start + 1):
+                # Remove trailing whitespace for hashing but keep the actual content
+                content = line.rstrip('\n\r')
+                hash_val = _hash_line(content)
+                numbered.append(f"{i}:{hash_val}|{content}")
+            results[file_path] = "\n".join(numbered)
+
+        # Convert results to a structured JSON string for clarity
+        return ToolResult(output=json.dumps(results, indent=2))
 
 
 class WriteTool(Tool):
@@ -396,7 +412,7 @@ class SearchWebTool(Tool):
                 if abstract:
                     results.append(f"**Summary**: {abstract}")
                 if data.get("Answer"):
-                    results.append(f"**Answer**: {data["Answer"]}")
+                    results.append(f"**Answer**: {data['Answer']}")
                 if data.get("RelatedTopics"):
                     for topic in data["RelatedTopics"][:3]:  # Limit to 3 topics
                         # API returns "Result" key, not "Text"
