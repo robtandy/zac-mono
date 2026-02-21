@@ -1,5 +1,5 @@
 # Hashline-based read/edit tools
-# 
+#
 # This implementation is inspired by the "harness problem" and the hashline editing pattern
 # described in https://blog.can.ac/2026/02/12/the-harness-problem/
 
@@ -39,12 +39,10 @@ class ToolDefinition(BaseModel):
 
 class Tool(ABC):
     @abstractmethod
-    def definition(self) -> ToolDefinition:
-        ...
+    def definition(self) -> ToolDefinition: ...
 
     @abstractmethod
-    async def execute(self, args: dict[str, Any]) -> ToolResult:
-        ...
+    async def execute(self, args: dict[str, Any]) -> ToolResult: ...
 
 
 class ToolRegistry:
@@ -69,13 +67,15 @@ _BASH_TIMEOUT = 120
 def _hash_line(content: str) -> str:
     """Generate a short hash for a line of content."""
     # Use CRC32 for speed, take 2 hex chars (can also use 3)
-    return format(zlib.crc32(content.encode()) & 0xFFFF, 'x')[:2]
+    hash_val = format(zlib.crc32(content.encode()) & 0xFFFF, "x")
+    # Ensure the hash is always 2 characters long
+    return hash_val.zfill(2)[:2]
 
 
 def _parse_hashline(line: str) -> tuple[int, str, str] | None:
     """Parse a hashline in format 'line:hash|content'."""
     # Match pattern: number:hash|content
-    match = re.match(r'^(\d+):([0-9a-f]+)\|(.*)$', line)
+    match = re.match(r"^(\d+):([0-9a-f]+)\|(.*)$", line)
     if match:
         return int(match.group(1)), match.group(2), match.group(3)
     return None
@@ -104,7 +104,9 @@ class BashTool(Tool):
             return ToolResult(output="No command provided.", is_error=True)
         try:
             proc = await asyncio.create_subprocess_exec(
-                "bash", "-c", command,
+                "bash",
+                "-c",
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
@@ -132,21 +134,35 @@ class ReadTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="read",
-            description="Read a file and return its contents with line numbers and content hashes. Use the hash to identify lines for editing.",
+            description="""
+Read a file and return its contents with line numbers and content hashes.
+
+Output format:
+  line_number:hash|content
+
+Example output:
+  1:a3|def example() {
+  2:f1|    print("Hello, world!");
+  3:0e|}
+
+Key details:
+- Each line is prefixed with its 1-based line number and a 2-character hash of its content.
+- The hash is deterministic (CRC32) and used to reference lines for editing.
+- Empty lines are included in the output (e.g., "5:00|").
+- Use this output to identify lines for the `edit` tool.
+
+Parameters:
+- file_path: Absolute path to the file to read.
+
+Example usage:
+  {"file_path": "/path/to/file.py"}
+""",
             parameters={
                 "type": "object",
                 "properties": {
                     "file_path": {
                         "type": "string",
                         "description": "Absolute path to the file to read.",
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Line number to start reading from (1-based).",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of lines to read.",
                     },
                 },
                 "required": ["file_path"],
@@ -155,8 +171,6 @@ class ReadTool(Tool):
 
     async def execute(self, args: dict[str, Any]) -> ToolResult:
         file_path = args.get("file_path", "")
-        offset = args.get("offset", 1)
-        limit = args.get("limit")
 
         if not file_path:
             return ToolResult(output="No file_path provided.", is_error=True)
@@ -169,17 +183,12 @@ class ReadTool(Tool):
             return ToolResult(output=f"Error reading file: {e}", is_error=True)
 
         lines = text.splitlines(keepends=True)
-        start = max(0, offset - 1)
-        if limit is not None:
-            lines = lines[start:start + limit]
-        else:
-            lines = lines[start:]
 
         # Output format: line:hash|content
         numbered = []
-        for i, line in enumerate(lines, start=start + 1):
+        for i, line in enumerate(lines, start=1):
             # Remove trailing whitespace for hashing but keep the actual content
-            content = line.rstrip('\n\r')
+            content = line.rstrip("\n\r")
             hash_val = _hash_line(content)
             numbered.append(f"{i}:{hash_val}|{content}")
         return ToolResult(output="\n".join(numbered))
@@ -225,7 +234,42 @@ class EditTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="edit",
-            description="Find and replace text in a file using content hashes. Use the hash from read output to identify lines.",
+            description="""
+Find and replace text in a file using content hashes from the `read` tool.
+
+Key details:
+- Use the `read` tool first to get line numbers and hashes.
+- The hash ensures the line hasn't changed since reading.
+- If the hash doesn't match, the edit fails explicitly (no silent corruption).
+
+Supported formats:
+1. Single-line edit: Replace a single line using its hash.
+   Format: "line_number:hash"
+   Example: "42:ab"
+
+2. Range edit: Replace multiple lines using a range of hashes.
+   Format: "start_line:start_hash-end_line:end_hash"
+   Example: "10:ab-15:cd"
+
+Parameters:
+- file_path: Absolute path to the file to edit.
+- hash: Line reference (single line or range).
+- new_text: The replacement text.
+
+Example usage (single line):
+  {
+    "file_path": "/path/to/file.py",
+    "hash": "42:ab",
+    "new_text": "    print('Updated line')"
+  }
+
+Example usage (range):
+  {
+    "file_path": "/path/to/file.py",
+    "hash": "10:ab-15:cd",
+    "new_text": "def new_function():\n    return True"
+  }
+""",
             parameters={
                 "type": "object",
                 "properties": {
@@ -254,7 +298,10 @@ class EditTool(Tool):
         if not file_path:
             return ToolResult(output="No file_path provided.", is_error=True)
         if not hash_ref:
-            return ToolResult(output="No hash provided. Use format 'line:hash' (e.g., '42:ab') or 'start:end' range.", is_error=True)
+            return ToolResult(
+                output="No hash provided. Use format 'line:hash' (e.g., '42:ab') or 'start:end' range.",
+                is_error=True,
+            )
         if not new_text:
             return ToolResult(output="No new_text provided.", is_error=True)
 
@@ -267,11 +314,11 @@ class EditTool(Tool):
             return ToolResult(output=f"Error reading file: {e}", is_error=True)
 
         lines = content.splitlines(keepends=True)
-        
+
         # Track the hash -> (line_num, content) mapping
         hash_map: dict[tuple[int, str], int] = {}  # (line_num, hash) -> index in lines
         for i, line in enumerate(lines):
-            content_stripped = line.rstrip('\n\r')
+            content_stripped = line.rstrip("\n\r")
             if content_stripped:  # Only hash non-empty lines
                 h = _hash_line(content_stripped)
                 hash_map[(i + 1, h)] = i  # 1-based line number
@@ -279,79 +326,127 @@ class EditTool(Tool):
         # Hash-based editing
         if hash_ref:
             # Parse hash reference: could be "line:hash" or "start:end" range
-            if '-' in hash_ref and ':' in hash_ref:
+            if "-" in hash_ref and ":" in hash_ref:
                 # Range format: "start_hash-end_hash" or "start_line:end_line"
-                parts = hash_ref.split('-')
+                parts = hash_ref.split("-")
                 if len(parts) != 2:
-                    return ToolResult(output="Invalid hash range format. Use 'line:hash' or 'start:end'.", is_error=True)
-                
+                    return ToolResult(
+                        output="Invalid hash range format. Use 'line:hash' or 'start:end'.",
+                        is_error=True,
+                    )
+
                 # Check if it's line:hash-line:hash format
-                if ':' in parts[0] and ':' in parts[1]:
+                if ":" in parts[0] and ":" in parts[1]:
                     # Format: "line1:hash1-line2:hash2"
-                    start_match = re.match(r'^(\d+):([0-9a-f]+)$', parts[0])
-                    end_match = re.match(r'^(\d+):([0-9a-f]+)$', parts[1])
+                    start_match = re.match(r"^(\d+):([0-9a-f]+)$", parts[0])
+                    end_match = re.match(r"^(\d+):([0-9a-f]+)$", parts[1])
                     if not start_match or not end_match:
-                        return ToolResult(output="Invalid hash range format.", is_error=True)
-                    
+                        return ToolResult(
+                            output="Invalid hash range format.", is_error=True
+                        )
+
                     start_line = int(start_match.group(1))
                     start_hash = start_match.group(2)
                     end_line = int(end_match.group(1))
                     end_hash = end_match.group(2)
-                    
+
                     # Find the matching range
                     start_idx = None
                     end_idx = None
                     for i, line in enumerate(lines):
-                        content_stripped = line.rstrip('\n\r')
+                        content_stripped = line.rstrip("\n\r")
                         if content_stripped:
                             h = _hash_line(content_stripped)
                             line_num = i + 1
-                            if start_idx is None and line_num == start_line and h == start_hash:
+                            if (
+                                start_idx is None
+                                and line_num == start_line
+                                and h == start_hash
+                            ):
                                 start_idx = i
-                            if start_idx is not None and line_num == end_line and h == end_hash:
+                            if (
+                                start_idx is not None
+                                and line_num == end_line
+                                and h == end_hash
+                            ):
                                 end_idx = i
                                 break
-                    
+
                     if start_idx is None:
-                        return ToolResult(output=f"Start hash {parts[0]} not found in file.", is_error=True)
+                        return ToolResult(
+                            output=f"Start hash {parts[0]} not found in file.",
+                            is_error=True,
+                        )
                     if end_idx is None:
-                        return ToolResult(output=f"End hash {parts[1]} not found in file.", is_error=True)
+                        return ToolResult(
+                            output=f"End hash {parts[1]} not found in file.",
+                            is_error=True,
+                        )
                     if end_idx < start_idx:
-                        return ToolResult(output="End hash appears before start hash.", is_error=True)
-                    
+                        return ToolResult(
+                            output="End hash appears before start hash.", is_error=True
+                        )
+
                     # Replace the range
                     # Preserve the original newlines
-                    new_lines = lines[:start_idx] + [new_text + '\n' if not new_text.endswith('\n') and start_idx < len(lines) and lines[start_idx].endswith('\n') else new_text] + lines[end_idx + 1:]
-                    new_content = ''.join(new_lines)
+                    new_lines = (
+                        lines[:start_idx]
+                        + [
+                            (
+                                new_text + "\n"
+                                if not new_text.endswith("\n")
+                                and start_idx < len(lines)
+                                and lines[start_idx].endswith("\n")
+                                else new_text
+                            )
+                        ]
+                        + lines[end_idx + 1 :]
+                    )
+                    new_content = "".join(new_lines)
                 else:
-                    return ToolResult(output="Invalid range format. Use 'line:hash-line:hash'.", is_error=True)
-            elif ':' in hash_ref:
+                    return ToolResult(
+                        output="Invalid range format. Use 'line:hash-line:hash'.",
+                        is_error=True,
+                    )
+            elif ":" in hash_ref:
                 # Single line format: "line:hash"
-                match = re.match(r'^(\d+):([0-9a-f]+)$', hash_ref)
+                match = re.match(r"^(\d+):([0-9a-f]+)$", hash_ref)
                 if not match:
-                    return ToolResult(output="Invalid hash format. Use 'line:hash'.", is_error=True)
-                
+                    return ToolResult(
+                        output="Invalid hash format. Use 'line:hash'.", is_error=True
+                    )
+
                 line_num = int(match.group(1))
                 target_hash = match.group(2)
-                
+
                 # Find the line with matching hash
                 idx = None
                 for i, line in enumerate(lines):
-                    content_stripped = line.rstrip('\n\r')
+                    content_stripped = line.rstrip("\n\r")
                     if content_stripped:
                         h = _hash_line(content_stripped)
                         if i + 1 == line_num and h == target_hash:
                             idx = i
                             break
-                
+
                 if idx is None:
-                    return ToolResult(output=f"Hash {hash_ref} not found in file. File may have changed since read.", is_error=True)
-                
+                    return ToolResult(
+                        output=f"Hash {hash_ref} not found in file. File may have changed since read.",
+                        is_error=True,
+                    )
+
                 # Replace the line
-                new_lines = lines[:idx] + [new_text + ('\n' if lines[idx].endswith('\n') else '')] + lines[idx + 1:]
-                new_content = ''.join(new_lines)
+                new_lines = (
+                    lines[:idx]
+                    + [new_text + ("\n" if lines[idx].endswith("\n") else "")]
+                    + lines[idx + 1 :]
+                )
+                new_content = "".join(new_lines)
             else:
-                return ToolResult(output="Invalid hash format. Use 'line:hash' or 'start:end'.", is_error=True)
+                return ToolResult(
+                    output="Invalid hash format. Use 'line:hash' or 'start:end'.",
+                    is_error=True,
+                )
 
         try:
             path.write_text(new_content)
