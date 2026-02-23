@@ -30,7 +30,9 @@ def _load_config(paths: DefaultPaths) -> dict | None:
         with open(config_file, "rb") as f:
             return tomllib.load(f)
     except Exception as e:
-        print(f"Warning: failed to load config from {config_file}: {e}", file=sys.stderr)
+        print(
+            f"Warning: failed to load config from {config_file}: {e}", file=sys.stderr
+        )
         return None
 
 
@@ -70,29 +72,56 @@ open-router-api-key = "{api_key}"
 
 def _add_common_options(parser: argparse.ArgumentParser) -> None:
     """Add options shared between the default command and `gateway start`."""
-    parser.add_argument("--host", default=DEFAULT_HOST, help=f"Bind address (default: {DEFAULT_HOST})")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT})")
+    parser.add_argument(
+        "--host", default=DEFAULT_HOST, help=f"Bind address (default: {DEFAULT_HOST})"
+    )
+    parser.add_argument(
+        "--port", type=int, default=DEFAULT_PORT, help=f"Port (default: {DEFAULT_PORT})"
+    )
     parser.add_argument("--tls-cert", help="TLS certificate file")
     parser.add_argument("--tls-key", help="TLS private key file")
     parser.add_argument("--no-tls", action="store_true", help="Disable TLS")
     parser.add_argument("--system-prompt-file", help="Path to system prompt file")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Model ID (default: {DEFAULT_MODEL})")
+    parser.add_argument(
+        "--model", default=DEFAULT_MODEL, help=f"Model ID (default: {DEFAULT_MODEL})"
+    )
     parser.add_argument("--log-file", help="Gateway log file path")
-    parser.add_argument("--log-level", choices=["debug", "info"], default=DEFAULT_LOG_LEVEL, help=f"Log level (default: {DEFAULT_LOG_LEVEL})")
+    parser.add_argument(
+        "--log-level",
+        choices=["debug", "info"],
+        default=DEFAULT_LOG_LEVEL,
+        help=f"Log level (default: {DEFAULT_LOG_LEVEL})",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="zac", description="Zac agent CLI")
     _add_common_options(parser)
-    parser.add_argument("--restart-gateway", action="store_true",
-                        help="Restart the gateway before connecting")
-    parser.add_argument("--gateway", metavar="URL",
-                        help="Connect to a remote gateway URL (e.g. wss://host:8765) instead of starting a local one")
+    parser.add_argument(
+        "--restart-gateway",
+        action="store_true",
+        help="Restart the gateway before connecting",
+    )
+    parser.add_argument(
+        "--gateway",
+        metavar="URL",
+        help="Connect to a remote gateway URL (e.g. wss://host:8765) instead of starting a local one",
+    )
+    parser.add_argument(
+        "--user-prompt",
+        metavar="PROMPT",
+        help="Send a prompt to the agent and print the response to stdout (does not start the TUI)",
+    )
 
     sub = parser.add_subparsers(dest="command")
 
     actions = sub.add_parser("actions-server", help="Start the action-system server")
-    actions.add_argument("--port", type=int, default=8000, help="Port for the action-system server (default: 8000)")
+    actions.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for the action-system server (default: 8000)",
+    )
     gw = sub.add_parser("gateway", help="Manage the gateway daemon")
     gw_sub = gw.add_subparsers(dest="gateway_action")
 
@@ -126,22 +155,45 @@ def _gateway_opts(args: argparse.Namespace, api_key: str | None = None) -> dict:
     return opts
 
 
+def _run_user_prompt(prompt: str, args: argparse.Namespace, api_key: str) -> None:
+    """Run the agent with a user prompt and print the response to stdout."""
+    import asyncio
+
+    from agent.client import AgentClient
+    from agent.events import EventType
+
+    async def _async_run():
+        client = AgentClient(
+            model=args.model,
+            system_prompt=None,  # Loaded automatically by AgentClient
+        )
+        await client.start()
+
+        try:
+            async for event in client.prompt(prompt):
+                if event.type == EventType.TEXT_DELTA:
+                    print(event.delta, end="", flush=True)
+                elif event.type == EventType.ERROR:
+                    print(f"\nError: {event.message}", file=sys.stderr)
+                    sys.exit(1)
+            print()  # newline after streamed response
+        finally:
+            await client.stop()
+
+    asyncio.run(_async_run())
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
     # For gateway commands, get API key if needed
     paths = DefaultPaths()
-    api_key = None
-    if args.command == "gateway" and args.gateway_action in ("start", "restart"):
-        api_key = _get_api_key(paths)
-    elif args.command is None:
-        # Default command - will start gateway unless --gateway is used
-        if args.gateway:
-            # Remote gateway - still need API key for local gateway if it gets started
-            api_key = _get_api_key(paths)
-        else:
-            api_key = _get_api_key(paths)
+    api_key = _get_api_key(paths)
+
+    if args.user_prompt:
+        _run_user_prompt(args.user_prompt, args, api_key)
+        return
 
     if args.command == "gateway":
         if args.gateway_action == "start":
@@ -160,19 +212,32 @@ def main(argv: list[str] | None = None) -> None:
         else:
             parser.parse_args(["gateway", "--help"])
     else:
-        # Default: start gateway if needed, then launch TUI
         if args.gateway:
-            # Connect to remote gateway — skip local daemon
+            # Connect to remote gateway
             tui.launch(gateway_url=args.gateway)
         else:
+            # Launch a gateway then connect
+            import random
+
+            # Choose a random port for the gateway
+            random_port = random.randint(49152, 65535)
             use_tls = not args.no_tls
             opts = _gateway_opts(args, api_key)
-            if args.restart_gateway:
-                daemon.restart(**opts)
-            else:
-                daemon.start(**opts)
-            tui.launch(
-                host=args.host,
-                port=args.port,
-                use_tls=use_tls,
-            )
+            opts["port"] = random_port  # Override port with random port
+            opts["ephemeral"] = True
+
+            pid = None
+            try:
+                if args.restart_gateway:
+                    pid = daemon.restart(**opts)
+                else:
+                    pid = daemon.start(**opts)
+
+                # Launch TUI and connect to the gateway
+                scheme = "wss" if use_tls else "ws"
+                gateway_url = f"{scheme}://localhost:{random_port}"
+                tui.launch(gateway_url=gateway_url)
+            finally:
+                # Stop the gateway when the TUI exits
+                if pid is not None:
+                    daemon.stop(pid=pid)

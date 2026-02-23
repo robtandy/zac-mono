@@ -20,6 +20,7 @@ class EventType(Enum):
     CANVAS_UPDATE = "canvas_update"
     CANVAS_SCREENSHOT = "canvas_screenshot"
     CANVAS_DISMISS = "canvas_dismiss"
+    MODEL_INFO = "model_info"
 
 
 class AgentEvent(BaseModel):
@@ -37,6 +38,7 @@ class AgentEvent(BaseModel):
     html: str = ""
     url: str = ""
     image_data: str = ""
+    model_info: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         match self.type:
@@ -91,3 +93,5 @@ class AgentEvent(BaseModel):
                 return {"type": "canvas_screenshot", "image_data": self.image_data}
             case EventType.CANVAS_DISMISS:
                 return {"type": "canvas_dismiss"}
+            case EventType.MODEL_INFO:
+                return {"type": "model_info", "model_info": self.model_info}
