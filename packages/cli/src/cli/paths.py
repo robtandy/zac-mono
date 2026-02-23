@@ -64,11 +64,9 @@ class DefaultPaths:
         return self.root / ".zac"
 
     @property
-    @property
     def pid_file(self) -> Path:
         return self.pid_dir / "gateway.pid"
 
     @property
     def config_file(self) -> Path:
         return self.root / "zac-config.toml"
-        return self.pid_dir / "gateway.pid"
