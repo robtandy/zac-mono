@@ -89,8 +89,17 @@ def start(
         if Path(cert).is_file() and Path(key).is_file():
             cmd.extend(["--tls-cert", cert, "--tls-key", key])
 
-    log = log_file or str(paths.log_file)
-    cmd.extend(["--log-file", log])
+    # Set up logging - stdout by default, or log file if specified
+    stdout = sys.stdout
+    stderr = sys.stderr
+    if log_file:
+        log = log_file
+        cmd.extend(["--log-file", log])
+        log_path = Path(log)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_fh = open(log_path, "a")
+        stdout = log_fh
+        stderr = log_fh
 
     if model:
         cmd.extend(["--model", model])
@@ -101,15 +110,10 @@ def start(
     if Path(prompt_file).is_file():
         env["ZAC_SYSTEM_PROMPT_FILE"] = prompt_file
 
-    # Open log file for stdout/stderr
-    log_path = Path(log)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_fh = open(log_path, "a")
-
     proc = subprocess.Popen(
         cmd,
-        stdout=log_fh,
-        stderr=log_fh,
+        stdout=stdout,
+        stderr=stderr,
         start_new_session=True,
         env=env,
     )
@@ -121,7 +125,8 @@ def start(
     # Wait for gateway to accept connections
     if not _wait_for_tcp(host, port):
         print(f"Warning: gateway (pid {proc.pid}) did not become ready within 10s", file=sys.stderr)
-        print(f"Check log file: {log}", file=sys.stderr)
+        if log_file:
+            print(f"Check log file: {log}", file=sys.stderr)
     else:
         print(f"Gateway started (pid {proc.pid})")
 
