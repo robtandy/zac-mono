@@ -25,6 +25,7 @@ export class ChatUI {
   private modelList: { id: string; name: string; description: string }[] = [];
   private currentModel: string = "";
   private reasoningEffort: string = "xhigh";
+  private contextInfo: { system: number; tools: number; user: number; assistant: number; tool_results: number; context_window: number } | null = null;
 
   constructor(connection: GatewayConnection) {
     this.connection = connection;
@@ -252,6 +253,7 @@ export class ChatUI {
         this.finalizeToolMarkdown();
         this.insertBeforeEditor(new Spacer(1));
         this.setStatus("Ready");
+        this.connection.send({ type: "context_request" });
         break;
 
       case "error":
@@ -306,6 +308,7 @@ export class ChatUI {
       }
 
       case "context_info":
+        this.contextInfo = event;
         this.renderContextBar(event);
         break;
 
@@ -632,6 +635,7 @@ export class ChatUI {
     const uniformBg = (s: string) => `\x1b[48;5;240m${s}\x1b[0m`; // Gray background
     const labelStyle = (s: string) => `\x1b[36m${s}\x1b[39m`; // Cyan text for labels (readable on gray)
     const valueStyle = (s: string) => `\x1b[37m${s}\x1b[39m`; // White text for values
+    const dimStyle = (s: string) => `\x1b[90m${s}\x1b[39m`; // Gray text for context
 
     // Format labeled values
     const statusLabel = labelStyle(" status ");
@@ -659,8 +663,20 @@ export class ChatUI {
       secondRow = `${modelLabel}${modelText}`;
     }
     
+    // Third row: Context info (if available)
+    let thirdRow = "";
+    if (this.contextInfo) {
+      const ctx = this.contextInfo;
+      const used = ctx.system + ctx.tools + ctx.user + ctx.assistant + ctx.tool_results;
+      const pct = ctx.context_window > 0 ? Math.round((used / ctx.context_window) * 100) : 0;
+      
+      thirdRow = dimStyle(` ctx: S:${ctx.system.toLocaleString()} T:${ctx.tools.toLocaleString()} U:${ctx.user.toLocaleString()} A:${ctx.assistant.toLocaleString()} TR:${ctx.tool_results.toLocaleString()} | ${pct}% (${used.toLocaleString()}/${ctx.context_window.toLocaleString()}) `);
+    }
+    
     // Combine rows
-    const statusBarText = secondRow ? `${firstRow}\n${secondRow}` : firstRow;
+    const statusBarText = thirdRow 
+      ? (secondRow ? `${firstRow}\n${secondRow}\n${thirdRow}` : `${firstRow}\n${thirdRow}`)
+      : (secondRow ? `${firstRow}\n${secondRow}` : firstRow);
     this.statusBar.setText(statusBarText);
     this.tui.requestRender();
   }
@@ -669,6 +685,7 @@ export class ChatUI {
     if (connected) {
       this.setStatus("Ready");
       this.connection.send({ type: "model_list_request" });
+      this.connection.send({ type: "context_request" });
     } else {
       this.setStatus("Reconnecting...");
     }
