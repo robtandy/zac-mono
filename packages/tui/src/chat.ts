@@ -26,6 +26,7 @@ export class ChatUI {
   private currentModel: string = "";
   private reasoningEffort: string = "xhigh";
   private contextInfo: { system: number; tools: number; user: number; assistant: number; tool_results: number; context_window: number } | null = null;
+  private compactionCount: number = 0;
 
   constructor(connection: GatewayConnection) {
     this.connection = connection;
@@ -273,6 +274,7 @@ export class ChatUI {
 
       case "compaction_end": {
         this.isCompacting = false;
+        this.compactionCount++;
         // Clear all chat children (everything before editor)
         const children = this.tui.children;
         const editorIdx = children.indexOf(this.editor);
@@ -673,13 +675,26 @@ export class ChatUI {
       const used = ctx.system + ctx.tools + ctx.user + ctx.assistant + ctx.tool_results;
       const pct = ctx.context_window > 0 ? Math.round((used / ctx.context_window) * 100) : 0;
       
-      thirdRow = dimStyle(` ctx: S:${ctx.system.toLocaleString()} T:${ctx.tools.toLocaleString()} U:${ctx.user.toLocaleString()} A:${ctx.assistant.toLocaleString()} TR:${ctx.tool_results.toLocaleString()} | ${pct}% (${used.toLocaleString()}/${ctx.context_window.toLocaleString()}) `);
+      const ctxLabel = labelStyle(" ctx ");
+      const ctxValue = dimStyle(`S:${ctx.system.toLocaleString()} T:${ctx.tools.toLocaleString()} U:${ctx.user.toLocaleString()} A:${ctx.assistant.toLocaleString()} TR:${ctx.tool_results.toLocaleString()} | ${pct}% (${used.toLocaleString()}/${ctx.context_window.toLocaleString()})`);
+      thirdRow = `${ctxLabel}${ctxValue}`;
+    }
+    
+    // Fourth row: Compaction count
+    let fourthRow = "";
+    if (this.compactionCount > 0) {
+      const compactionsLabel = labelStyle(" compactions ");
+      const compactionsValue = valueStyle(` ${this.compactionCount} `);
+      fourthRow = `${compactionsLabel}${compactionsValue}`;
     }
     
     // Combine rows
-    const statusBarText = thirdRow 
-      ? (secondRow ? `${firstRow}\n${secondRow}\n${thirdRow}` : `${firstRow}\n${thirdRow}`)
-      : (secondRow ? `${firstRow}\n${secondRow}` : firstRow);
+    const rows = [firstRow];
+    if (secondRow) rows.push(secondRow);
+    if (thirdRow) rows.push(thirdRow);
+    if (fourthRow) rows.push(fourthRow);
+    
+    const statusBarText = rows.join("\n");
     this.statusBar.setText(statusBarText);
     this.tui.requestRender();
   }
