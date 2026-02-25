@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from openai import APIConnectionError, APIStatusError, AsyncOpenAI
@@ -28,6 +29,27 @@ _MODEL_CONTEXT_SIZES: dict[str, int] = {
 }
 
 _COMPACTION_THRESHOLD = 0.8
+
+_CONFIG_PATH = Path.home() / ".zac" / "agent_config.json"
+
+
+def _load_config() -> dict[str, str]:
+    """Load config from ~/.zac/agent_config.json."""
+    try:
+        if _CONFIG_PATH.is_file():
+            return json.loads(_CONFIG_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        pass
+    return {}
+
+
+def _save_config(config: dict[str, str]) -> None:
+    """Save config to ~/.zac/agent_config.json."""
+    try:
+        _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CONFIG_PATH.write_text(json.dumps(config, indent=2))
+    except OSError:
+        pass
 _KEEP_RECENT_TOKENS = 20000
 _CHARS_PER_TOKEN = 4
 
@@ -56,7 +78,11 @@ class AgentClient:
         tools: ToolRegistry | None = None,
         reasoning_effort: str = "xhigh",
     ) -> None:
-        self._model = model or _DEFAULT_MODEL
+        # Load config to get saved model and reasoning_effort
+        config = _load_config()
+        
+        # Use provided values first, then fall back to saved config
+        self._model = model or config.get("model") or _DEFAULT_MODEL
         self._system_prompt = system_prompt or _load_system_prompt()
         self._tools = tools or default_tools()
         self._client: AsyncOpenAI | None = None
@@ -64,7 +90,7 @@ class AgentClient:
         self._abort_event = asyncio.Event()
         self._steer_queue: asyncio.Queue[str] = asyncio.Queue()
         self._running = False
-        self._reasoning_effort = reasoning_effort
+        self._reasoning_effort = config.get("reasoning_effort", reasoning_effort)
 
     @property
     def running(self) -> bool:
@@ -491,10 +517,12 @@ class AgentClient:
     def set_reasoning_effort(self, effort: str) -> None:
         self._reasoning_effort = effort
         logger.info("Reasoning effort switched to %s", effort)
+        _save_config({"model": self._model, "reasoning_effort": effort})
 
     def set_model(self, model_id: str) -> None:
         self._model = model_id
         logger.info("Model switched to %s", model_id)
+        _save_config({"model": model_id, "reasoning_effort": self._reasoning_effort})
 
     async def abort(self) -> None:
         self._abort_event.set()
