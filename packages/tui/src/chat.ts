@@ -25,11 +25,17 @@ export class ChatUI {
   private modelList: { id: string; name: string; description: string }[] = [];
   private currentModel: string = "";
   private reasoningEffort: string = "xhigh";
+  private configPath: string;
 
   constructor(connection: GatewayConnection) {
     this.connection = connection;
     const terminal = new ProcessTerminal();
     this.tui = new TUI(terminal);
+
+    // Load config from ~/.zac/config.json
+    const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+    this.configPath = `${homeDir}/.zac/config.json`;
+    this.loadConfig();
 
     this.editor = new Editor(this.tui, editorTheme);
 
@@ -348,6 +354,10 @@ export class ChatUI {
         if (event.reasoning_effort) {
           this.reasoningEffort = event.reasoning_effort;
         }
+        // If we have a saved model that exists in the list and gateway has no current model, switch to it
+        if (!event.current && this.currentModel && this.modelList.some(m => m.id === this.currentModel)) {
+          this.connection.send({ type: "steer", message: `/model ${this.currentModel}` });
+        }
         this.setStatus("Ready");
         break;
 
@@ -355,6 +365,7 @@ export class ChatUI {
         this.currentModel = event.model;
         this.insertBeforeEditor(new Text(`[Model: ${event.model}]`, 1, 0, statusColor));
         this.setStatus("Ready");
+        this.saveConfig();
         break;
 
       case "model_info": {
@@ -440,6 +451,7 @@ export class ChatUI {
           this.insertBeforeEditor(new Text(`[Reasoning Effort: ${event.effort}]`, 1, 0, statusColor));
         }
         this.setStatus("Ready");
+        this.saveConfig();
         break;
     }
   }
@@ -663,6 +675,35 @@ export class ChatUI {
     const statusBarText = secondRow ? `${firstRow}\n${secondRow}` : firstRow;
     this.statusBar.setText(statusBarText);
     this.tui.requestRender();
+  }
+
+  private loadConfig(): void {
+    try {
+      const fs = require("fs");
+      if (fs.existsSync(this.configPath)) {
+        const data = JSON.parse(fs.readFileSync(this.configPath, "utf-8"));
+        if (data.model) this.currentModel = data.model;
+        if (data.reasoningEffort) this.reasoningEffort = data.reasoningEffort;
+      }
+    } catch (e) {
+      // Ignore config load errors
+    }
+  }
+
+  private saveConfig(): void {
+    try {
+      const fs = require("fs");
+      const dir = require("path").dirname(this.configPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(this.configPath, JSON.stringify({
+        model: this.currentModel,
+        reasoningEffort: this.reasoningEffort,
+      }, null, 2));
+    } catch (e) {
+      // Ignore config save errors
+    }
   }
 
   setConnected(connected: boolean): void {
