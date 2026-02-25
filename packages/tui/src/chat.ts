@@ -274,7 +274,10 @@ export class ChatUI {
 
       case "compaction_end": {
         this.isCompacting = false;
-        this.compactionCount++;
+        // Only increment if compaction actually happened (tokens_before > 0)
+        if (event.tokens_before > 0) {
+          this.compactionCount++;
+        }
         // Clear all chat children (everything before editor)
         const children = this.tui.children;
         const editorIdx = children.indexOf(this.editor);
