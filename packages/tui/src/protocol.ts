@@ -28,5 +28,5 @@ export type ServerEvent =
   | { type: "canvas_dismiss" }
   | { type: "model_list"; models: { id: string; name: string; description: string }[]; current: string; reasoning_effort: string }
   | { type: "model_set"; model: string }
-  | { type: "model_info"; model_id: string; name: string; description: string; pricing: { prompt: string; completion: string } | null; context_length: number }
+  | { type: "model_info"; model_id: string; name: string; description: string; pricing: { prompt: string; completion: string } | null; context_length: number; architecture: { model: string; mode: string; tokenizer: string; instruct_type: string } | null; top_provider: { provider: string; max_completion_tokens: number; supports_vision: boolean } | null; recommended: { prompt: number; completion: number } | null; enabled: boolean; modality: string; created: number; route: string }
   | { type: "reasoning_effort_set"; effort: string; error?: string };

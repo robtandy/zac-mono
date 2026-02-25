@@ -358,22 +358,81 @@ export class ChatUI {
         break;
 
       case "model_info": {
-        const lines = [`Model: ${event.name} (${event.model_id})`, ""];
+        const lines: string[] = [];
+        
+        // Header
+        lines.push(`# ${event.name}`);
+        lines.push(`**ID:** ${event.model_id}`);
+        lines.push("");
+        
+        // Description
         if (event.description) {
-          lines.push(event.description.slice(0, 500) + (event.description.length > 500 ? "..." : ""));
+          lines.push(`## Description`);
+          lines.push(event.description.slice(0, 1000) + (event.description.length > 1000 ? "..." : ""));
           lines.push("");
         }
+        
+        // Basic Info Table
+        lines.push("## Details");
+        lines.push("| Field | Value |");
+        lines.push("|-------|-------|");
+        lines.push(`| Context Length | ${event.context_length.toLocaleString()} tokens |`);
+        lines.push(`| Modality | ${event.modality || "N/A"} |`);
+        lines.push(`| Enabled | ${event.enabled ? "Yes" : "No"} |`);
+        lines.push(`| Route | ${event.route || "N/A"} |`);
+        if (event.created) {
+          const createdDate = new Date(event.created * 1000).toLocaleDateString();
+          lines.push(`| Created | ${createdDate} |`);
+        }
+        lines.push("");
+        
+        // Pricing Table
+        lines.push("## Pricing (per 1M tokens)");
+        lines.push("| Type | Price |");
+        lines.push("|------|-------|");
         if (event.pricing) {
           const promptPrice = parseFloat(event.pricing.prompt);
           const completionPrice = parseFloat(event.pricing.completion);
-          lines.push(`Pricing (per 1M tokens):`);
-          lines.push(`  Input:  $${(promptPrice * 1_000_000).toFixed(2)}`);
-          lines.push(`  Output: $${(completionPrice * 1_000_000).toFixed(2)}`);
+          lines.push(`| Input | $${(promptPrice * 1_000_000).toFixed(2)} |`);
+          lines.push(`| Output | $${(completionPrice * 1_000_000).toFixed(2)} |`);
         } else {
-          lines.push("Pricing: Not available");
+          lines.push("| Input | N/A |");
+          lines.push("| Output | N/A |");
         }
         lines.push("");
-        lines.push(`Context length: ${event.context_length.toLocaleString()} tokens`);
+        
+        // Architecture Table
+        if (event.architecture) {
+          lines.push("## Architecture");
+          lines.push("| Field | Value |");
+          lines.push("|-------|-------|");
+          lines.push(`| Model | ${event.architecture.model || "N/A"} |`);
+          lines.push(`| Mode | ${event.architecture.mode || "N/A"} |`);
+          lines.push(`| Tokenizer | ${event.architecture.tokenizer || "N/A"} |`);
+          lines.push(`| Instruct Type | ${event.architecture.instruct_type || "N/A"} |`);
+          lines.push("");
+        }
+        
+        // Top Provider Table
+        if (event.top_provider) {
+          lines.push("## Top Provider");
+          lines.push("| Field | Value |");
+          lines.push("|-------|-------|");
+          lines.push(`| Provider | ${event.top_provider.provider || "N/A"} |`);
+          lines.push(`| Max Completion Tokens | ${event.top_provider.max_completion_tokens.toLocaleString()} |`);
+          lines.push(`| Supports Vision | ${event.top_provider.supports_vision ? "Yes" : "No"} |`);
+          lines.push("");
+        }
+        
+        // Recommended Table
+        if (event.recommended) {
+          lines.push("## Recommended (per 1M tokens)");
+          lines.push("| Type | Tokens |");
+          lines.push("|------|--------|");
+          lines.push(`| Input | ${event.recommended.prompt.toLocaleString()} |`);
+          lines.push(`| Output | ${event.recommended.completion.toLocaleString()} |`);
+        }
+        
         const md = new Markdown(lines.join("\n"), 1, 0, markdownTheme);
         this.insertBeforeEditor(md);
         this.setStatus("Ready");

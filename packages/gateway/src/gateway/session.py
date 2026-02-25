@@ -286,12 +286,43 @@ class Session:
                     }))
                     return
                 
+                # Extract pricing info
                 pricing = model_data.get("pricing")
                 pricing_info = None
                 if pricing:
                     pricing_info = {
                         "prompt": pricing.get("prompt", "0"),
                         "completion": pricing.get("completion", "0"),
+                    }
+                
+                # Extract top provider info
+                top_provider = model_data.get("top_provider")
+                top_provider_info = None
+                if top_provider:
+                    top_provider_info = {
+                        "provider": top_provider.get("provider_name", ""),
+                        "max_completion_tokens": top_provider.get("max_completion_tokens", 0),
+                        "supports_vision": top_provider.get("supports_vision", False),
+                    }
+                
+                # Extract architecture info
+                architecture = model_data.get("architecture")
+                architecture_info = None
+                if architecture:
+                    architecture_info = {
+                        "model": architecture.get("model", ""),
+                        "mode": architecture.get("mode", ""),
+                        "tokenizer": architecture.get("tokenizer", ""),
+                        "instruct_type": architecture.get("instruct_type", ""),
+                    }
+                
+                # Extract recommended info
+                recommended = model_data.get("recommended")
+                recommended_info = None
+                if recommended:
+                    recommended_info = {
+                        "prompt": recommended.get("prompt", 0),
+                        "completion": recommended.get("completion", 0),
                     }
                 
                 await self.broadcast(json.dumps({
@@ -301,6 +332,13 @@ class Session:
                     "description": model_data.get("description", ""),
                     "pricing": pricing_info,
                     "context_length": model_data.get("context_length", 0),
+                    "architecture": architecture_info,
+                    "top_provider": top_provider_info,
+                    "recommended": recommended_info,
+                    "enabled": model_data.get("enabled", True),
+                    "modality": model_data.get("modality", ""),
+                    "created": model_data.get("created", 0),
+                    "route": model_data.get("route", ""),
                 }))
                 logger.info("Fetched model info for %s", model_id)
         except Exception as e:
