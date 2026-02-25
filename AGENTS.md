@@ -158,20 +158,56 @@ The gateway is a WebSocket server that manages agent sessions and exposes the we
 
 ### Session Management
 - Each connected WebSocket client is bound to an `AgentClient` instance
-- Handles commands: `prompt`, `steer`, `abort`, `context_request`, `model_list_request`
+- Handles commands: `prompt`, `steer`, `abort`, `context_request`, `model_list_request`, `model_info_request`
 - Special `/reload` command hot-reloads Python agent modules and rebuilds web UI
+- Saves model and reasoning effort to config for persistence across restarts
+
+### Config Persistence
+- The agent persists `model` and `reasoning_effort` to `~/.zac/agent_config.json`
+- On startup, loads saved values and uses them automatically
+- Config is saved when `/model` or `/reasoning` commands are executed
 
 ---
 
 ## TUI Package (`packages/tui`)
 
 ### Overview
-The Terminal User Interface - a Node.js/TypeScript app that connects to the gateway.
+The Terminal User Interface - a Node.js/TypeScript app that connects to the gateway. It provides a real-time chat interface for interacting with AI agents, including a **status bar** at the bottom of the screen.
 
 ### Key Details
 - Entry point: `packages/tui/src/index.ts`
 - Runs via `npx tsx` (TypeScript executor)
 - Connects to gateway via WebSocket (URL in `ZAC_GATEWAY_URL` env var)
+
+### Status Bar
+The status bar is implemented in `packages/tui/src/chat.ts` and displays:
+- **status**: Dynamic text (e.g., "Ready", "Thinking...").
+- **pwd**: Current working directory.
+- **reasoning**: Reasoning effort (e.g., "xhigh").
+- **model**: Current model (e.g., "claude-3.5-sonnet").
+
+The status bar uses the `setStatus` method to update its content. It relies on ANSI escape codes to create consistent styling across all labels in tmux.
+
+#### Testing in tmux
+Always test the TUI in a `tmux` session to avoid taking over the terminal. Use the following workflow:
+
+```bash
+# Start a tmux session
+tmux new -s tui-test
+
+# Run the TUI
+cd /root/zac-dev
+.venv/bin/zac
+
+# Detach from tmux
+Ctrl+b d
+
+# Reattach to tmux
+tmux attach -t tui-test
+
+# Kill the tmux session when done
+tmux kill-session -t tui-test
+```
 
 ---
 
